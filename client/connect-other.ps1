@@ -87,14 +87,18 @@ function Ensure-Tailscale {
         $state = $null
         try { $state = $statusText | ConvertFrom-Json } catch {}
         $sameNetwork = (-not $expectedTailnet -or $state.CurrentTailnet.MagicDNSSuffix -eq $expectedTailnet)
-        if ($state.BackendState -eq 'Running' -and $sameNetwork) { return }
+        if ($state.BackendState -eq 'Running' -and $sameNetwork) {
+            & $ts set --unattended=true --accept-dns=false
+            if ($LASTEXITCODE -ne 0) { throw 'Tailscale 无法保持后台连接，请以管理员身份运行启动脚本。' }
+            return
+        }
         if (-not $config.tailscale_auth_protected) { throw '请先打开 Tailscale 并登录与工作流相同的网络。' }
         if ($state.BackendState -eq 'Running' -and -not $sameNetwork) { Write-Host '本机与远程设备不在同一网络，正在保留原账号并登录工作流网络。' }
         $keyPath = Join-Path $PSScriptRoot ('auth-'+[guid]::NewGuid().ToString('N')+'.tmp')
         [IO.File]::WriteAllText($keyPath, (Unprotect-LocalValue $config.tailscale_auth_protected))
         $identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
         & icacls.exe $keyPath /inheritance:r /grant:r "${identity}:(F)" | Out-Null
-        & $ts login "--auth-key=file:$keyPath" --accept-dns=false --nickname=github-remote-1233 --timeout=60s
+        & $ts login "--auth-key=file:$keyPath" --accept-dns=false --unattended=true --hostname=client-12138882 --nickname=github-remote-1233 --timeout=60s
         $loginExit = $LASTEXITCODE
         $deadline = [DateTime]::UtcNow.AddSeconds(30)
         do {

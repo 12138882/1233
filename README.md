@@ -27,3 +27,7 @@ Linux SSH only listens on its Tailscale address. Windows RDP uses NLA and an inb
 macOS uses [mac-rdp-server](https://github.com/DawidAdamski/mac-rdp-server). It stays bound to `127.0.0.1:3389`; connect with an authenticated SSH tunnel. Its screen recording and accessibility permissions must be authorized in macOS settings. Installing the binary and opening a TCP port does not prove that screen capture and input work.
 
 The local connection helper retrieves the artifact through GitHub, pins SSH host keys, and uses Tailscale for the actual remote connection.
+
+Fixed device names are `remote-windows-1233`, `remote-linux-1233`, and `remote-macos-1233`. Addresses may change; the helper retrieves the current address instead of guessing it from the hostname. It verifies that the local client is in the same tailnet, retains the previous local account, and uses unattended mode to keep the selected connection running when the UI is closed. The local service's boot startup setting is managed separately.
+
+Passwords and the optional local Tailscale auth key are protected using Windows DPAPI for the current user. The client SSH key and configuration files are installed with user-only access. The GitHub token is read from a local file and its encrypted backup is stored in `GH_REMOTE_TOKEN`; no workflow requires or exposes its plaintext in source code.
