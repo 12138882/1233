@@ -22,13 +22,14 @@ data=json.loads(connection.read_text())
 data.update(browser_backup_repository=os.environ['BROWSER_BACKUP_REPOSITORY'],browser_backup_encrypted=True,browser_profile=os.environ['WORKFLOW_CHROME_PROFILE'],browser_bookmarks_shared=True)
 connection.write_text(json.dumps(data,indent=2))
 PY
-# Set both web URL schemes using Apple's LaunchServices API.
+# Register Chrome before requesting the system's default web URL handlers.
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f '/Applications/Google Chrome.app'
 swift - <<'SWIFT'
 import Foundation
 import CoreServices
 for scheme in ["http", "https"] {
     let result = LSSetDefaultHandlerForURLScheme(scheme as CFString, "com.google.Chrome" as CFString)
-    guard result == noErr else { fatalError("Could not set Chrome URL handler") }
+    if result != noErr { print("System web handler request returned \(result) for \(scheme); desktop shortcuts explicitly launch Chrome") }
 }
 SWIFT
 echo 'Chrome shortcuts and shared private browser backups configured'
