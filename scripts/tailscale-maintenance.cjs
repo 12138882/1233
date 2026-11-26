@@ -103,6 +103,17 @@ async function maintain({ token, suffix = 'tail6f1974.ts.net', apply = false, fe
       const target = canonicalName(d);
       const currentName = String(d.name).replace(/\.$/, '').toLowerCase();
       const targetName = `${target}.${suffix}`;
+      const owner = latest.find(n => idOf(n) !== idOf(d) && String(n.name).replace(/\.$/, '').toLowerCase() === targetName);
+      if (currentName !== targetName && owner && isManaged(owner, suffix) && owner.connectedToControl === false && timestamp(owner.created) < timestamp(d.created)) {
+        const old = await api(`/device/${encodeURIComponent(idOf(owner))}?fields=all`);
+        if (old && isManaged(old, suffix) && old.connectedToControl === false && timestamp(old.created) < timestamp(d.created)) {
+          const retiredName = `${target}-${timestamp(old.created)}`;
+          await api(`/device/${encodeURIComponent(idOf(old))}/name`, 'POST', { name: retiredName });
+          const retired = await api(`/device/${encodeURIComponent(idOf(old))}?fields=all`);
+          if (String(retired?.name).replace(/\.$/, '').toLowerCase() !== `${retiredName}.${suffix}`) throw Error('Old device name read-back failed');
+          owner.name = retired.name;
+        }
+      }
       if (currentName !== targetName && !latest.some(n => idOf(n) !== idOf(d) && String(n.name).replace(/\.$/, '').toLowerCase() === targetName)) {
         await api(`/device/${encodeURIComponent(idOf(d))}/name`, 'POST', { name: target });
         const renamed = await api(`/device/${encodeURIComponent(idOf(d))}?fields=all`);
