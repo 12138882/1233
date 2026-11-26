@@ -271,8 +271,8 @@ try {
                 $ready = $false
                 for ($attempt=0; $attempt -lt 60; $attempt++) {
                     if ($tunnel.HasExited) { throw ('SSH 隧道未能启动：'+(Get-Content -LiteralPath $errorLog -Raw -ErrorAction SilentlyContinue)) }
-                    $probe = New-Object Net.Sockets.TcpClient
-                    try {if($probe.ConnectAsync('127.0.0.1',$localPort).Wait(500) -and $probe.Connected){$ready=$true;break}} catch {} finally {$probe.Dispose()}
+                    $listening = Get-NetTCPConnection -LocalAddress '127.0.0.1' -LocalPort $localPort -State Listen -ErrorAction SilentlyContinue
+                    if ($listening) {$ready=$true;break}
                     Start-Sleep -Milliseconds 500
                 }
                 if (-not $ready) {throw '等待 macOS 桌面隧道超时，请重试。'}
