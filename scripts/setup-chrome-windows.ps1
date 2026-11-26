@@ -28,6 +28,8 @@ New-ItemProperty -Path $systemPolicy -Name DefaultAssociationsConfiguration -Val
 $desktop = [Environment]::GetFolderPath('Desktop')
 $connectionFile = Join-Path $env:RUNNER_TEMP 'connection.json'
 $connection = Get-Content -LiteralPath $connectionFile -Raw | ConvertFrom-Json
+$seedFile=Join-Path (Split-Path $profile) 'local-seed-applied.json'
+if(Test-Path -LiteralPath $seedFile){$connection|Add-Member -NotePropertyName browser_local_seed_id -NotePropertyValue ((Get-Content -LiteralPath $seedFile -Raw|ConvertFrom-Json).id) -Force}
 $sites = [ordered]@{ChatGPT='https://chatgpt.com/';X='https://x.com/';YouTube='https://www.youtube.com/';Google='https://www.google.com/';Baidu='https://www.baidu.com/';Gemini='https://gemini.google.com/';AList=$connection.alist_url}
 $shell = New-Object -ComObject WScript.Shell
 foreach ($site in $sites.GetEnumerator()) {

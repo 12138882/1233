@@ -20,6 +20,8 @@ end run
     subprocess.run(['osacompile','-o',str(desktop/(name+'.app')),'-e',source],check=True,stdout=subprocess.DEVNULL)
 connection=pathlib.Path(os.environ['RUNNER_TEMP'])/'connection.json'
 data=json.loads(connection.read_text())
+seed=pathlib.Path(os.environ['WORKFLOW_CHROME_PROFILE']).parent/'local-seed-applied.json'
+if seed.exists(): data['browser_local_seed_id']=json.loads(seed.read_text())['id']
 data.update(browser_backup_repository=os.environ['BROWSER_BACKUP_REPOSITORY'],browser_backup_encrypted=True,browser_profile=os.environ['WORKFLOW_CHROME_PROFILE'],browser_bookmarks_shared=True)
 connection.write_text(json.dumps(data,indent=2))
 PY
