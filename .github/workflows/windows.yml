@@ -42,6 +42,10 @@ jobs:
         env:
           DESKTOP_PASSWORD: ${{ secrets.WINDOWS_DESKTOP_PASSWORD }}
         run: ./scripts/setup-windows.ps1
+      - name: Install AList and desktop shortcuts
+        env:
+          ALIST_ADMIN_PASSWORD: ${{ secrets.ALIST_ADMIN_PASSWORD }}
+        run: ./scripts/setup-alist-windows.ps1
       - name: Publish connection information
         uses: actions/upload-artifact@v4
         with:

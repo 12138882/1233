@@ -4,7 +4,7 @@ Windows RDP, Linux SSH, and macOS SSH with an optional local RDP server.
 
 The structure is based on [sky-beta/tailscale-remote-desktop](https://github.com/sky-beta/tailscale-remote-desktop), inspected at commit `ecf0f3e`.
 
-Each workflow is manually dispatched with a `minutes` input between 10 and 300 (default 60). Jobs end when that time expires. Files stored on hosted runners are temporary. Use these workflows only for project development/testing permitted by [GitHub Actions terms](https://docs.github.com/en/site-policy/github-terms/github-terms-for-additional-products-and-features#actions). For a permanent remote machine, use your own server.
+Windows and macOS are manually dispatched with a `minutes` input between 10 and 300 (default 60). Linux runs for 340 minutes and requests its next session when `LINUX_AUTORUN=true`. A scheduled maintenance workflow checks every 15 minutes and also reacts when Linux completes, starting a session only if none is active. Recent failures wait at least 15 minutes before another attempt. Files stored on hosted runners are temporary. Use these workflows only for project development/testing permitted by [GitHub Actions terms](https://docs.github.com/en/site-policy/github-terms/github-terms-for-additional-products-and-features#actions). For a permanent remote machine, use your own server.
 
 ## Secrets
 
@@ -15,6 +15,7 @@ Each workflow is manually dispatched with a `minutes` input between 10 and 300 (
 | `LINUX_SSH_HOST_KEY` | Private Ed25519 host key for Linux |
 | `MACOS_SSH_HOST_KEY` | Private Ed25519 host key for macOS |
 | `WINDOWS_DESKTOP_PASSWORD` | Password for the Windows `runneradmin` account |
+| `ALIST_ADMIN_PASSWORD` | AList admin password for Windows and Linux |
 
 Never put the client SSH private key or account tokens in this repository. The tailnet policy must allow your client to reach port 22 (SSH) and/or 3389 (Windows RDP).
 
@@ -29,5 +30,9 @@ macOS uses [mac-rdp-server](https://github.com/DawidAdamski/mac-rdp-server). It 
 The local connection helper retrieves the artifact through GitHub, pins SSH host keys, and uses Tailscale for the actual remote connection.
 
 Fixed device names are `remote-windows-1233`, `remote-linux-1233`, and `remote-macos-1233`. Addresses may change; the helper retrieves the current address instead of guessing it from the hostname. It verifies that the local client is in the same tailnet, retains the previous local account, and uses unattended mode to keep the selected connection running when the UI is closed. The local service's boot startup setting is managed separately.
+
+AList is installed by default on Linux and Windows, listening on the Tailscale address at port 5244. Its `admin` account uses `ALIST_ADMIN_PASSWORD`. The local storage driver is mounted at `/`: the actual Linux folder is `/c`, and Windows uses `C:\`. Windows also creates desktop links for ChatGPT, X, YouTube, Google, Baidu, Gemini, and the local AList panel. Linux `/c` is temporary runner storage and is cleared when that runner is replaced.
+
+Set repository variable `LINUX_AUTORUN=false` before cancelling Linux to stop automatic renewal. The local stop launcher performs both actions. Turning off the maintenance workflow or changing the variable stops scheduled recovery; a workflow cancellation alone is treated as a recoverable interruption while automatic maintenance is enabled.
 
 Passwords and the optional local Tailscale auth key are protected using Windows DPAPI for the current user. The client SSH key and configuration files are installed with user-only access. The GitHub token is read from a local file and its encrypted backup is stored in `GH_REMOTE_TOKEN`; no workflow requires or exposes its plaintext in source code.

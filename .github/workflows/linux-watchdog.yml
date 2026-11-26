@@ -1,0 +1,42 @@
+name: Maintain Linux SSH
+on:
+  schedule:
+    - cron: '7,22,37,52 * * * *'
+  workflow_run:
+    workflows: ['Linux SSH via Tailscale']
+    types: [completed]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: write
+concurrency:
+  group: maintain-linux-ssh
+  cancel-in-progress: false
+jobs:
+  maintain:
+    if: ${{ vars.LINUX_AUTORUN == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Start Linux only when no session is active
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          runs=$(gh run list --repo "$GH_REPO" --workflow linux.yml --branch main --limit 50 --json status,conclusion,updatedAt)
+          active=$(jq '[.[] | select(.status != "completed")] | length' <<< "$runs")
+          if [ "$active" -gt 0 ]; then
+            echo 'A Linux session is already active; nothing to start.'
+            exit 0
+          fi
+          if [ "$(jq -r '.[0].conclusion // ""' <<< "$runs")" = failure ]; then
+            last=$(jq -r '.[0].updatedAt' <<< "$runs")
+            age=$(( $(date +%s) - $(date -d "$last" +%s) ))
+            if [ "$age" -lt 900 ]; then
+              echo 'The previous session failed recently; waiting for the next scheduled check.'
+              exit 0
+            fi
+          fi
+          gh workflow run linux.yml --repo "$GH_REPO" --ref main --field minutes=340
+          echo 'Linux SSH session requested automatically.'

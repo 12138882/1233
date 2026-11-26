@@ -3,19 +3,20 @@ on:
   workflow_dispatch:
     inputs:
       minutes:
-        description: Session duration in minutes (10-300)
+        description: Session duration in minutes (10-340)
         required: true
-        default: '60'
+        default: '340'
         type: string
 permissions:
   contents: read
+  actions: write
 concurrency:
   group: remote-linux
   cancel-in-progress: false
 jobs:
   ssh:
     runs-on: ubuntu-latest
-    timeout-minutes: 330
+    timeout-minutes: 360
     defaults:
       run:
         shell: bash
@@ -31,7 +32,7 @@ jobs:
           SSH_HOST_KEY: ${{ secrets.LINUX_SSH_HOST_KEY }}
         run: |
           set -euo pipefail
-          [[ "$SESSION_MINUTES" =~ ^[0-9]+$ ]] && ((10#$SESSION_MINUTES >= 10 && 10#$SESSION_MINUTES <= 300)) || exit 1
+          [[ "$SESSION_MINUTES" =~ ^[0-9]+$ ]] && ((10#$SESSION_MINUTES >= 10 && 10#$SESSION_MINUTES <= 340)) || exit 1
           test -n "$TS_KEY" && test -n "$SSH_PUBLIC_KEY" && test -n "$SSH_HOST_KEY"
       - uses: tailscale/github-action@v4
         with:
@@ -43,6 +44,10 @@ jobs:
           SSH_PUBLIC_KEY: ${{ secrets.SSH_PUBLIC_KEY }}
           SSH_HOST_KEY: ${{ secrets.LINUX_SSH_HOST_KEY }}
         run: bash scripts/setup-linux.sh
+      - name: Install AList and mount local storage
+        env:
+          ALIST_ADMIN_PASSWORD: ${{ secrets.ALIST_ADMIN_PASSWORD }}
+        run: bash scripts/setup-alist-linux.sh
       - name: Publish connection information
         uses: actions/upload-artifact@v4
         with:
@@ -54,3 +59,10 @@ jobs:
         env:
           SESSION_MINUTES: ${{ inputs.minutes }}
         run: sleep "$((10#$SESSION_MINUTES * 60))"
+      - name: Start the next Linux session
+        if: ${{ success() && vars.LINUX_AUTORUN == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          GH_REF: ${{ github.ref_name }}
+        run: gh workflow run linux.yml --repo "$GH_REPO" --ref "$GH_REF" --field minutes=340

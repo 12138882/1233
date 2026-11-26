@@ -1,11 +1,12 @@
 ﻿[CmdletBinding()]
 param(
     [Parameter(Mandatory=$true)][ValidateSet('windows','linux','macos')][string]$System,
-    [ValidateRange(10,300)][int]$Minutes = 60,
+    [ValidateRange(10,340)][int]$Minutes = 60,
     [switch]$NoConnect,
     [switch]$StatusOnly,
     [switch]$SshOnly,
-    [switch]$TestConnection
+    [switch]$TestConnection,
+    [switch]$StopAutoRun
 )
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -72,6 +73,37 @@ function Unprotect-LocalValue {
     try { return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr) }
 }
 
+function Get-TailscaleState {
+    $ts = Join-Path $env:ProgramFiles 'Tailscale\tailscale.exe'
+    for ($attempt=0; $attempt -lt 5; $attempt++) {
+        $start = New-Object Diagnostics.ProcessStartInfo
+        $start.FileName = $ts
+        $start.Arguments = 'status --json'
+        $start.UseShellExecute = $false
+        $start.CreateNoWindow = $true
+        $start.RedirectStandardOutput = $true
+        $start.RedirectStandardError = $true
+        $start.StandardOutputEncoding = [Text.Encoding]::UTF8
+        $start.StandardErrorEncoding = [Text.Encoding]::UTF8
+        $process = New-Object Diagnostics.Process
+        $process.StartInfo = $start
+        try {
+            [void]$process.Start()
+            $output = $process.StandardOutput.ReadToEnd()
+            $errorOutput = $process.StandardError.ReadToEnd()
+            $process.WaitForExit()
+            if ($process.ExitCode -eq 0 -and $output.TrimStart().StartsWith('{')) {
+                try {
+                    $parsed = $output | ConvertFrom-Json -ErrorAction Stop
+                    if ($parsed.BackendState) { return $parsed }
+                } catch {}
+            }
+        } finally { $process.Dispose() }
+        Start-Sleep -Milliseconds 800
+    }
+    throw '无法读取 Tailscale 状态。请确认 Tailscale 服务已启动，关闭旧的连接窗口后重新运行桌面脚本。'
+}
+
 function Ensure-Tailscale {
     $ts = Join-Path $env:ProgramFiles 'Tailscale\tailscale.exe'
     if (-not (Test-Path -LiteralPath $ts)) { throw '请先安装 Tailscale：https://tailscale.com/download/windows' }
@@ -83,12 +115,10 @@ function Ensure-Tailscale {
     try {
         $acquired = $mutex.WaitOne(90000)
         if (-not $acquired) { throw '另一个连接窗口正在登录 Tailscale，请稍后重试。' }
-        $statusText = & $ts status --json 2>$null
-        $state = $null
-        try { $state = $statusText | ConvertFrom-Json } catch {}
+        $state = Get-TailscaleState
         $sameNetwork = (-not $expectedTailnet -or $state.CurrentTailnet.MagicDNSSuffix -eq $expectedTailnet)
         if ($state.BackendState -eq 'Running' -and $sameNetwork) {
-            & $ts set --unattended=true --accept-dns=false
+            & $ts set --unattended=true --accept-dns=false --hostname=client-12138882
             if ($LASTEXITCODE -ne 0) { throw 'Tailscale 无法保持后台连接，请以管理员身份运行启动脚本。' }
             return
         }
@@ -103,8 +133,7 @@ function Ensure-Tailscale {
         if ($loginExit -ne 0) { throw "Tailscale 登录未完成（退出码 $loginExit）。请查看上方的具体错误。" }
         $deadline = [DateTime]::UtcNow.AddSeconds(30)
         do {
-            $statusText = & $ts status --json 2>$null
-            try { $state = $statusText | ConvertFrom-Json } catch {}
+            $state = Get-TailscaleState
             if ($state.BackendState -eq 'Running' -and (-not $expectedTailnet -or $state.CurrentTailnet.MagicDNSSuffix -eq $expectedTailnet)) { return }
             Start-Sleep -Seconds 2
         } while ([DateTime]::UtcNow -lt $deadline)
@@ -123,8 +152,12 @@ function Get-Connection {
     if (-not $run) {
         if ($StatusOnly) { throw '没有活动的工作流。' }
         Write-Host "正在启动 $System，时长 $Minutes 分钟。"
-        Invoke-Github "/actions/workflows/${System}.yml/dispatches" 'POST' @{ref='main';inputs=@{minutes=[string]$Minutes}} | Out-Null
-        for ($i=0; $i -lt 12 -and -not $run; $i++) {
+        if ($System -eq 'linux') {
+            Invoke-Github '/actions/workflows/linux-watchdog.yml/dispatches' 'POST' @{ref='main'} | Out-Null
+        } else {
+            Invoke-Github "/actions/workflows/${System}.yml/dispatches" 'POST' @{ref='main';inputs=@{minutes=[string]$Minutes}} | Out-Null
+        }
+        for ($i=0; $i -lt 45 -and -not $run; $i++) {
             Start-Sleep -Seconds 2
             $runs = Invoke-Github "/actions/workflows/${System}.yml/runs?branch=main&event=workflow_dispatch&per_page=20"
             $run = $runs.workflow_runs | Where-Object { $_.status -in @('queued','in_progress','waiting','pending','requested') } | Select-Object -First 1
@@ -154,7 +187,7 @@ function Resolve-LiveAddress {
     $ts = Join-Path $env:ProgramFiles 'Tailscale\tailscale.exe'
     $fixedName = 'remote-'+$System+'-1233'
     for ($attempt=0; $attempt -lt 5; $attempt++) {
-        $status = (& $ts status --json 2>$null) | ConvertFrom-Json
+        $status = Get-TailscaleState
         $peers = @($status.Peer.PSObject.Properties.Value | Where-Object {
             $_.Online -and ($_.HostName -eq $fixedName -or $_.DNSName -like ($fixedName+'.*'))
         })
@@ -166,6 +199,7 @@ function Resolve-LiveAddress {
             $address = $selected.TailscaleIPs | Where-Object { $_ -match '^100\.\d{1,3}\.\d{1,3}\.\d{1,3}$' } | Select-Object -First 1
             if ($address) {
                 $Connection.ip = [string]$address
+                if ($Connection.PSObject.Properties.Name -contains 'alist_url') { $Connection.alist_url = 'http://'+$address+':5244' }
                 Write-Host "已自动识别 $fixedName 的 IP：$address"
                 return $Connection
             }
@@ -176,10 +210,22 @@ function Resolve-LiveAddress {
 }
 
 try {
+    if ($StopAutoRun) {
+        if ($System -ne 'linux') { throw '自动循环开关仅用于 Linux SSH。' }
+        Invoke-Github '/actions/variables/LINUX_AUTORUN' 'PATCH' @{name='LINUX_AUTORUN';value='false'} | Out-Null
+        $runs=Invoke-Github '/actions/workflows/linux.yml/runs?per_page=30'
+        foreach($run in $runs.workflow_runs){if($run.status -ne 'completed'){Invoke-Github ('/actions/runs/'+$run.id+'/cancel') 'POST' | Out-Null}}
+        Write-Host 'Linux 自动循环已关闭，已请求停止当前实例。'
+        return
+    }
+    if ($System -eq 'linux' -and -not $StatusOnly) {
+        Invoke-Github '/actions/variables/LINUX_AUTORUN' 'PATCH' @{name='LINUX_AUTORUN';value='true'} | Out-Null
+    }
     $connection = Get-Connection
     if ($NoConnect) { $connection | ConvertTo-Json -Depth 8; return }
     Ensure-Tailscale
     $connection = Resolve-LiveAddress $connection
+    if ($connection.alist_url) { Write-Host ('AList 面板：'+$connection.alist_url+'，用户名：admin') }
     if ($System -eq 'windows') {
         if ($TestConnection) {
             $tcp = New-Object Net.Sockets.TcpClient
