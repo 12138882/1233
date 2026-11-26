@@ -294,7 +294,7 @@ function chromePath() {
 }
 async function launch(importCookies=true) {
   if (!fs.existsSync(readyFile)) throw Error('Browser restore has not completed');
-  const args = ['--user-data-dir='+profile,'--disk-cache-dir='+path.join(profile,'Disk Cache'),
+  const args = ['--user-data-dir='+profile,'--profile-directory=Default','--disk-cache-dir='+path.join(profile,'Disk Cache'),
     '--remote-debugging-address=127.0.0.1','--remote-debugging-port=9222',
     '--no-first-run','--no-default-browser-check','--no-startup-window'];
   const child = spawn(chromePath(), args, {detached:true, stdio:'ignore',windowsHide:true}); child.unref();
@@ -319,7 +319,7 @@ async function launch(importCookies=true) {
   let nativeRestored=false;
   if(importCookies&&(!savedTabs||savedTabs.some(w=>w.urls.length))&&fs.existsSync(path.join(profile,'Default','Sessions'))){
     // Let Chrome read its own session files only after cookie restoration.
-    const restore=spawn(chromePath(),['--user-data-dir='+profile,'--disk-cache-dir='+path.join(profile,'Disk Cache'),'--restore-last-session','--no-first-run','--no-default-browser-check'],{detached:true,stdio:'ignore',windowsHide:true});restore.unref();
+    const restore=spawn(chromePath(),['--user-data-dir='+profile,'--profile-directory=Default','--disk-cache-dir='+path.join(profile,'Disk Cache'),'--restore-last-session','--no-first-run','--no-default-browser-check'],{detached:true,stdio:'ignore',windowsHide:true});restore.unref();
     console.log('Requested restoration of the imported Chrome session files');
     for(let i=0;i<15;i++){if((await cdp('Target.getTargets')).targetInfos.some(t=>t.type==='page')){nativeRestored=true;break;}await pause(1000);}
   }
