@@ -43,6 +43,19 @@ jobs:
           SSH_PUBLIC_KEY: ${{ secrets.SSH_PUBLIC_KEY }}
           SSH_HOST_KEY: ${{ secrets.MACOS_SSH_HOST_KEY }}
         run: bash scripts/setup-macos.sh
+      - name: Restore runner DNS
+        run: |
+          set -euo pipefail
+          if networksetup -listallnetworkservices | grep -Fxq Ethernet; then
+            sudo networksetup -setdnsservers Ethernet Empty
+          fi
+          sudo dscacheutil -flushcache
+          python3 - <<'PY'
+          import socket
+          for host in ('github.com', 'api.github.com'):
+              socket.getaddrinfo(host, 443)
+              print(f'DNS ready: {host}')
+          PY
       - name: Install private RDP server
         timeout-minutes: 15
         continue-on-error: true
