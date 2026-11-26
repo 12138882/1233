@@ -147,7 +147,8 @@ async function restore() {
       if (manifest.platform !== platform || manifest.format !== 1) throw Error('Wrong platform or unsupported backup');
       if (fs.existsSync(root) && (await fsp.readdir(root)).length) throw Error('Refusing to overwrite an existing browser profile');
       await fsp.mkdir(root, {recursive:true, mode:0o700});
-      for (const name of await fsp.readdir(extracted)) await fsp.rename(path.join(extracted,name),path.join(root,name));
+      // Runner temp and the Windows user profile can be on different volumes.
+      for (const name of await fsp.readdir(extracted)) await fsp.cp(path.join(extracted,name),path.join(root,name),{recursive:true,preserveTimestamps:true});
       console.log('Restored authenticated Chrome profile backup for '+platform);
     } finally { await fsp.rm(staging, {recursive:true, force:true}); }
   } else {
