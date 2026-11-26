@@ -225,15 +225,19 @@ async function launch(importCookies=true) {
   }
   console.log('Chrome is ready; remote debugging listens on loopback only');
 }
-async function tar(output) {
+async function tar(output,final=false) {
   return new Promise((resolve,reject)=>{
-    const child = spawn('tar', ['--exclude=SingletonLock','--exclude=SingletonSocket','--exclude=SingletonCookie',
-      '--exclude=DevToolsActivePort','-czf',output,'-C',root,'.'],{windowsHide:true,stdio:['ignore','ignore','pipe']});
+    const args=['--exclude=SingletonLock','--exclude=SingletonSocket','--exclude=SingletonCookie',
+      '--exclude=DevToolsActivePort','--exclude=LOCK','--exclude=lockfile','-czf',output,'-C',root,'.'];
+    const useSnapshot=platform==='windows'&&!final;
+    const child = spawn(useSnapshot?'pwsh':'tar',useSnapshot?[
+      '-NoProfile','-NonInteractive','-File',path.join(__dirname,'archive-chrome-windows.ps1'),'-Root',root,'-Archive',output
+    ]:args,{windowsHide:true,stdio:['ignore','ignore','pipe'],timeout:180000});
     let error='';child.stderr.on('data',data=>{error+=data.toString();});
     child.on('error',reject);child.on('close',code=>{
       // A live database can change during a periodic snapshot; a final closed snapshot follows.
       if(code===0 || (code===1 && /file changed as we read it|file shrank/i.test(error)))resolve();
-      else reject(Error('Profile archive failed; prior backup preserved (tar exit '+code+')'));
+      else reject(Error('Profile archive failed; prior backup preserved (archive exit '+code+')'));
     });
   });
 }
@@ -251,7 +255,7 @@ async function backup(final=false) {
     await fsp.writeFile(path.join(root,'backup-manifest.json'),JSON.stringify({format:1,platform,run:process.env.GITHUB_RUN_ID,created:new Date().toISOString(),final}),{mode:0o600});
     staging = await fsp.mkdtemp(path.join(temp,'chrome-backup-'));
     const archive=path.join(staging,'profile.tar.gz'),encrypted=path.join(staging,'profile.enc');
-    await tar(archive); await encryptFile(archive,encrypted,key());
+    await tar(archive,final); await encryptFile(archive,encrypted,key());
     const item=await release(true);
     const saved=await upload(item,encrypted,'chrome-'+platform+'-');
     const size=saved.size;
