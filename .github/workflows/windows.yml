@@ -1,0 +1,54 @@
+name: Windows RDP via Tailscale
+on:
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: Session duration in minutes (10-300)
+        required: true
+        default: '60'
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: remote-windows
+  cancel-in-progress: false
+jobs:
+  desktop:
+    runs-on: windows-latest
+    timeout-minutes: 330
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Validate configuration
+        env:
+          SESSION_MINUTES: ${{ inputs.minutes }}
+          TS_KEY: ${{ secrets.TAILSCALE_AUTHKEY }}
+          DESKTOP_PASSWORD: ${{ secrets.WINDOWS_DESKTOP_PASSWORD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $minutes = 0
+          if (-not [int]::TryParse($env:SESSION_MINUTES, [ref]$minutes) -or $minutes -lt 10 -or $minutes -gt 300) { throw 'Session must be 10-300 minutes' }
+          if (-not $env:TS_KEY -or -not $env:DESKTOP_PASSWORD) { throw 'Required secrets are missing' }
+      - uses: tailscale/github-action@v4
+        with:
+          authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
+          hostname: remote-windows-${{ github.run_id }}
+      - name: Configure private RDP
+        env:
+          DESKTOP_PASSWORD: ${{ secrets.WINDOWS_DESKTOP_PASSWORD }}
+        run: ./scripts/setup-windows.ps1
+      - name: Publish connection information
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-connection
+          path: ${{ runner.temp }}/connection.json
+          retention-days: 1
+          if-no-files-found: error
+      - name: Keep session available
+        env:
+          SESSION_MINUTES: ${{ inputs.minutes }}
+        run: Start-Sleep -Seconds ([int]$env:SESSION_MINUTES * 60)

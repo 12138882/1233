@@ -1,0 +1,55 @@
+name: Linux SSH via Tailscale
+on:
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: Session duration in minutes (10-300)
+        required: true
+        default: '60'
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: remote-linux
+  cancel-in-progress: false
+jobs:
+  ssh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Validate configuration
+        env:
+          SESSION_MINUTES: ${{ inputs.minutes }}
+          TS_KEY: ${{ secrets.TAILSCALE_AUTHKEY }}
+          SSH_PUBLIC_KEY: ${{ secrets.SSH_PUBLIC_KEY }}
+          SSH_HOST_KEY: ${{ secrets.LINUX_SSH_HOST_KEY }}
+        run: |
+          set -euo pipefail
+          [[ "$SESSION_MINUTES" =~ ^[0-9]+$ ]] && ((10#$SESSION_MINUTES >= 10 && 10#$SESSION_MINUTES <= 300)) || exit 1
+          test -n "$TS_KEY" && test -n "$SSH_PUBLIC_KEY" && test -n "$SSH_HOST_KEY"
+      - uses: tailscale/github-action@v4
+        with:
+          authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
+          hostname: remote-linux-${{ github.run_id }}
+      - name: Configure SSH and forwarding
+        env:
+          SSH_PUBLIC_KEY: ${{ secrets.SSH_PUBLIC_KEY }}
+          SSH_HOST_KEY: ${{ secrets.LINUX_SSH_HOST_KEY }}
+        run: bash scripts/setup-linux.sh
+      - name: Publish connection information
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-connection
+          path: ${{ runner.temp }}/connection.json
+          retention-days: 1
+          if-no-files-found: error
+      - name: Keep session available
+        env:
+          SESSION_MINUTES: ${{ inputs.minutes }}
+        run: sleep "$((10#$SESSION_MINUTES * 60))"

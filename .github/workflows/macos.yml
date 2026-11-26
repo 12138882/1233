@@ -1,0 +1,80 @@
+name: macOS SSH and RDP via Tailscale
+on:
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: Session duration in minutes (10-300)
+        required: true
+        default: '60'
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: remote-macos
+  cancel-in-progress: false
+jobs:
+  desktop:
+    runs-on: macos-15-intel
+    timeout-minutes: 330
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Validate configuration
+        env:
+          SESSION_MINUTES: ${{ inputs.minutes }}
+          TS_KEY: ${{ secrets.TAILSCALE_AUTHKEY }}
+          SSH_PUBLIC_KEY: ${{ secrets.SSH_PUBLIC_KEY }}
+          SSH_HOST_KEY: ${{ secrets.MACOS_SSH_HOST_KEY }}
+        run: |
+          set -euo pipefail
+          [[ "$SESSION_MINUTES" =~ ^[0-9]+$ ]] && ((10#$SESSION_MINUTES >= 10 && 10#$SESSION_MINUTES <= 300)) || exit 1
+          test -n "$TS_KEY" && test -n "$SSH_PUBLIC_KEY" && test -n "$SSH_HOST_KEY"
+      - uses: tailscale/github-action@v4
+        with:
+          authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
+          hostname: remote-macos-${{ github.run_id }}
+          args: --accept-dns=false
+      - name: Configure SSH and forwarding
+        env:
+          SSH_PUBLIC_KEY: ${{ secrets.SSH_PUBLIC_KEY }}
+          SSH_HOST_KEY: ${{ secrets.MACOS_SSH_HOST_KEY }}
+        run: bash scripts/setup-macos.sh
+      - name: Install private RDP server
+        timeout-minutes: 15
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          brew install DawidAdamski/mac-rdp-server/mac-rdp-server
+          mac-rdp-server --check-permissions > "$RUNNER_TEMP/rdp-permissions.txt" 2>&1 || true
+          nohup mac-rdp-server --bind-addr 127.0.0.1 > "$RUNNER_TEMP/rdp.log" 2>&1 < /dev/null &
+          echo $! > "$RUNNER_TEMP/rdp.pid"
+          sleep 3
+          python3 - <<'PY'
+          import json, os, pathlib, socket
+          p = pathlib.Path(os.environ['RUNNER_TEMP']) / 'connection.json'
+          data = json.loads(p.read_text())
+          try:
+              with socket.create_connection(('127.0.0.1', 3389), timeout=3):
+                  data['rdp_listening'] = True
+          except OSError:
+              data['rdp_listening'] = False
+          data['rdp_transport'] = 'ssh-tunnel'
+          data['rdp_permissions'] = (p.parent / 'rdp-permissions.txt').read_text(errors='replace')
+          p.write_text(json.dumps(data, indent=2))
+          PY
+      - name: Publish connection information
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-connection
+          path: ${{ runner.temp }}/connection.json
+          retention-days: 1
+          if-no-files-found: error
+      - name: Keep session available
+        env:
+          SESSION_MINUTES: ${{ inputs.minutes }}
+        run: sleep "$((10#$SESSION_MINUTES * 60))"
