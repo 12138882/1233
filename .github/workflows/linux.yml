@@ -37,8 +37,17 @@ jobs:
       - uses: tailscale/github-action@v4
         with:
           authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
-          hostname: remote-linux-1233
+          hostname: linux
           args: --advertise-exit-node --accept-dns=false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Maintain Tailscale device
+        continue-on-error: true
+        env:
+          TAILSCALE_API_KEY: ${{ secrets.TAILSCALE_API_KEY }}
+          TAILSCALE_DNS_SUFFIX: tail6f1974.ts.net
+        run: node scripts/tailscale-maintenance.cjs --apply
       - name: Configure SSH and forwarding
         env:
           SSH_PUBLIC_KEY: ${{ secrets.SSH_PUBLIC_KEY }}
@@ -65,4 +74,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           GH_REF: ${{ github.ref_name }}
-        run: gh workflow run linux.yml --repo "$GH_REPO" --ref "$GH_REF" --field minutes=340
+        run: gh workflow run linux.yml --repo "$GH_REPO" --ref "$GH_REF" --field
+          minutes=340

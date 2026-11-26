@@ -1,0 +1,46 @@
+name: Maintain Tailscale remote devices
+on:
+  schedule:
+    - cron: '3,18,33,48 * * * *'
+  workflow_run:
+    workflows: ['Linux SSH via Tailscale', 'Windows RDP via Tailscale', 'macOS SSH and RDP via Tailscale']
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Preview changes without modifying devices
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: tailscale-device-maintenance
+  cancel-in-progress: false
+jobs:
+  maintain:
+    if: ${{ github.event_name != 'workflow_run' || (github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.head_branch == 'main') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Approve exits, disable node key expiry, and clean old remote devices
+        env:
+          TAILSCALE_API_KEY: ${{ secrets.TAILSCALE_API_KEY }}
+          TAILSCALE_DNS_SUFFIX: tail6f1974.ts.net
+          DRY_RUN: ${{ inputs.dry_run || false }}
+        run: |
+          if [ -z "$TAILSCALE_API_KEY" ]; then
+            echo 'TAILSCALE_API_KEY secret is missing.'
+            exit 1
+          fi
+          if [ "$DRY_RUN" = true ]; then
+            node scripts/tailscale-maintenance.cjs
+          else
+            node scripts/tailscale-maintenance.cjs --apply
+          fi

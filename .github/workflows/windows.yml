@@ -39,8 +39,8 @@ jobs:
       - uses: tailscale/github-action@v4
         with:
           authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
-          hostname: remote-windows-1233
-          args: --advertise-exit-node --accept-dns=false
+          hostname: windows
+          args: --accept-dns=false
       - name: Configure private RDP
         env:
           DESKTOP_PASSWORD: ${{ secrets.WINDOWS_DESKTOP_PASSWORD }}
@@ -54,6 +54,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Maintain Tailscale device
+        continue-on-error: true
+        env:
+          TAILSCALE_API_KEY: ${{ secrets.TAILSCALE_API_KEY }}
+          TAILSCALE_DNS_SUFFIX: tail6f1974.ts.net
+        run: node scripts/tailscale-maintenance.cjs --apply
       - name: Restore private Chrome data
         id: browser_restore
         env:
@@ -70,6 +76,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GH_REMOTE_TOKEN }}
           BROWSER_BACKUP_KEY: ${{ secrets.BROWSER_BACKUP_KEY }}
         run: node scripts/browser-data.cjs backup
+        continue-on-error: true
       - name: Publish connection information
         uses: actions/upload-artifact@v4
         with:
@@ -84,7 +91,8 @@ jobs:
           BROWSER_BACKUP_KEY: ${{ secrets.BROWSER_BACKUP_KEY }}
         run: node scripts/browser-data.cjs session
       - name: Save final encrypted browser data
-        if: ${{ always() && steps.browser_restore.outcome == 'success' && steps.chrome_start.outcome == 'success' }}
+        if: ${{ always() && steps.browser_restore.outcome == 'success' &&
+          steps.chrome_start.outcome == 'success' }}
         timeout-minutes: 8
         env:
           GH_TOKEN: ${{ secrets.GH_REMOTE_TOKEN }}

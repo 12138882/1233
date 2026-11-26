@@ -14,5 +14,5 @@ Get-NetIPInterface | Where-Object { $_.ConnectionState -eq 'Connected' -and $_.I
 $ip = (& tailscale ip -4).Trim()
 if ($LASTEXITCODE -ne 0 -or $ip -notmatch '^100\.\d+\.\d+\.\d+$') { throw 'No Tailscale IP address' }
 $status = (& tailscale status --json) | ConvertFrom-Json
-@{system='windows';ip=$ip;username='runneradmin';rdp_port=3389;run_id=$env:GITHUB_RUN_ID;tailnet=$status.CurrentTailnet.MagicDNSSuffix;hostname='remote-windows-1233'} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'connection.json') -Encoding utf8
+@{system='windows';ip=$ip;username='runneradmin';rdp_port=3389;run_id=$env:GITHUB_RUN_ID;tailnet=$status.CurrentTailnet.MagicDNSSuffix;hostname='windows'} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'connection.json') -Encoding utf8
 "RDP: $ip`:3389`n`nUsername: runneradmin`n" | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY

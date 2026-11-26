@@ -18,6 +18,7 @@ Windows and macOS are manually dispatched with a `minutes` input between 10 and 
 | `ALIST_ADMIN_PASSWORD` | AList admin password for Windows and Linux |
 | `BROWSER_BACKUP_KEY` | Random 32-byte AES-256-GCM key, base64 encoded |
 | `GH_REMOTE_TOKEN` | Access to the separate private browser backup repository |
+| `TAILSCALE_API_KEY` | Administrative API token for scoped device maintenance; store only as an Actions Secret |
 
 Never put the client SSH private key or account tokens in this repository. The tailnet policy must allow your client to reach port 22 (SSH) and/or 3389 (Windows RDP).
 
@@ -25,13 +26,13 @@ Never put the client SSH private key or account tokens in this repository. The t
 
 Each workflow publishes a short-lived artifact named `windows-connection`, `linux-connection`, or `macos-connection`. It contains the Tailscale address, username, and public SSH host key, but no passwords or private keys.
 
-Linux SSH only listens on its Tailscale address. Windows RDP uses NLA and an inbound firewall rule scoped to the Tailscale interface. IPv4 and IPv6 forwarding are enabled at setup. All three systems advertise themselves as Tailscale exit nodes. Approve "Use as exit node" for each device in the Tailscale admin console before selecting one as your client's internet exit. The auth key used to join the tailnet cannot approve these routes through the administrative API.
+Linux SSH only listens on its Tailscale address. Windows RDP uses NLA and an inbound firewall rule scoped to the Tailscale interface. IPv4 and IPv6 forwarding are enabled at setup. Only Linux advertises an exit node. Device maintenance automatically approves its advertised default routes and disables node-key expiry for the three remote devices. Windows and macOS retain desktop access and have exit routes disabled. The device login auth key cannot perform administrative API operations.
 
 macOS uses [mac-rdp-server](https://github.com/DawidAdamski/mac-rdp-server). It stays bound to `127.0.0.1:3389`; connect with an authenticated SSH tunnel. Its screen recording and accessibility permissions must be authorized in macOS settings. Installing the binary and opening a TCP port does not prove that screen capture and input work.
 
 The local connection helper retrieves the artifact through GitHub, pins SSH host keys, and uses Tailscale for the actual remote connection.
 
-Fixed device names are `remote-windows-1233`, `remote-linux-1233`, and `remote-macos-1233`. Addresses may change; the helper retrieves the current address instead of guessing it from the hostname. It verifies that the local client is in the same tailnet, retains the previous local account, and uses unattended mode to keep the selected connection running when the UI is closed. The local service's boot startup setting is managed separately.
+Fixed device names are `windows`, `linux`, and `macos`. Addresses may change; the helper retrieves the current address instead of guessing it from the hostname. It verifies that the local client is in the same tailnet, retains the previous local account, and uses unattended mode to keep the selected connection running when the UI is closed. The local service's boot startup setting is managed separately.
 
 AList is installed by default on Linux and Windows, listening on the Tailscale address at port 5244. Its `admin` account uses `ALIST_ADMIN_PASSWORD`. The local storage driver is mounted at `/c`: the actual Linux folder is `/root`, and Windows uses `C:\`. Linux AList runs as root so it can list this restricted directory. Windows also creates desktop links for ChatGPT, X, YouTube, Google, Baidu, Gemini, and the local AList panel. Linux `/root` is temporary runner storage and is cleared when that runner is replaced.
 
@@ -50,3 +51,7 @@ The default profile's bookmarks are also shared as a separate encrypted file: ea
 Chrome uses a dedicated user-data directory and a loopback-only debugging endpoint to checkpoint and restore cookies without copying operating-system encryption keys. The full raw profile is also preserved. Cookies are not a guarantee of continued login: Google, ChatGPT and other services can require authentication again; OS-bound saved passwords, passkeys, client certificates and device-bound credentials are not made portable by copying a profile. This does not back up Downloads or any browser on the connecting computer.
 
 Website shortcuts explicitly open Chrome with this profile. Windows initializes services and backups in the background, suppresses Server Manager and Tailscale foreground startup, and keeps Tailscale running unattended. The helper console remains visible while retrieving a remote session or reporting an error.
+
+## Tailscale device maintenance
+
+The maintenance script runs at startup, every 15 minutes, and after a remote session completes. It only manages these three platform names (and their legacy `remote-*-1233` names) in `tail6f1974.ts.net`. Old records are removed only after at least 15 minutes offline with a newer online replacement. Before removal it re-reads connectivity and replacement state. Local PCs, external/shared devices, unknown names, and online devices are retained. API connectivity uses `connectedToControl`; a missing `lastSeen` never means offline. Linux alone receives exit-route approval; Windows and macOS remain desktop machines. Node-key expiry is disabled on online managed devices. API access tokens still expire separately and must be renewed in the Actions Secret when required.

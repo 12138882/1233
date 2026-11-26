@@ -201,11 +201,12 @@ function Get-Connection {
 function Resolve-LiveAddress {
     param($Connection)
     $ts = Join-Path $env:ProgramFiles 'Tailscale\tailscale.exe'
-    $fixedName = 'remote-'+$System+'-1233'
+    $fixedName = $System
+    $legacyName = 'remote-'+$System+'-1233'
     for ($attempt=0; $attempt -lt 5; $attempt++) {
         $status = Get-TailscaleState
         $peers = @($status.Peer.PSObject.Properties.Value | Where-Object {
-            $_.Online -and ($_.HostName -eq $fixedName -or $_.DNSName -like ($fixedName+'.*'))
+            $_.Online -and ($_.HostName -in @($fixedName,$legacyName) -or $_.DNSName -like ($fixedName+'.*') -or $_.DNSName -like ($legacyName+'.*'))
         })
         $matchingRun = @($peers | Where-Object { $_.TailscaleIPs -contains $Connection.ip })
         if ($matchingRun.Count -eq 1) { $selected = $matchingRun[0] }
