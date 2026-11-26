@@ -14,6 +14,7 @@ concurrency:
   cancel-in-progress: false
 env:
   BROWSER_BACKUP_REPOSITORY: 12138882/1233-browser-data
+  BROWSER_LOCAL_SEED_MANIFEST_ID: ${{ vars.BROWSER_LOCAL_SEED_MANIFEST_ID }}
 jobs:
   desktop:
     runs-on: macos-15-intel

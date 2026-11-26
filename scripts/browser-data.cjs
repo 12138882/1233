@@ -126,6 +126,59 @@ async function bookmarksSave(item,staging){
   await fsp.writeFile(bookmarkBaseline,hash,{mode:0o600});
   console.log('Updated shared encrypted bookmarks');
 }
+async function fileHash(file){const hash=crypto.createHash('sha256');for await(const chunk of fs.createReadStream(file))hash.update(chunk);return hash.digest('hex');}
+function safeManagedRoot(){
+  const expected=platform==='windows'?path.join(process.env.LOCALAPPDATA,'WorkflowChrome'):path.join(os.homedir(),'Library/Application Support/WorkflowChrome');
+  const actual=path.resolve(root);
+  if(actual!==path.resolve(expected)&&!actual.startsWith(path.resolve(temp)+path.sep))throw Error('Unsafe managed Chrome directory');
+}
+async function localSeedRestore(item){
+  if(!item)return false;
+  const pointer=process.env.BROWSER_LOCAL_SEED_MANIFEST_ID;
+  const asset=pointer&&/^\d+$/.test(pointer)?await api('/releases/assets/'+pointer):
+    (await assets(item)).filter(a=>a.name.startsWith('local-seed-manifest-')&&a.name.endsWith('.enc')).sort((a,b)=>b.id-a.id)[0];
+  if(!asset)return false;
+  if(!asset.name.startsWith('local-seed-manifest-'))throw Error('Invalid local seed pointer');
+  const staging=await fsp.mkdtemp(path.join(temp,'local-chrome-restore-'));
+  let previous;
+  try{
+    const manifestCipher=path.join(staging,'manifest.enc'),manifestFile=path.join(staging,'manifest.json');
+    await download(asset,manifestCipher);await decryptFile(manifestCipher,manifestFile,key());
+    const manifest=JSON.parse(await fsp.readFile(manifestFile,'utf8'));
+    if(manifest.format!==1||manifest.kind!=='local-chrome-seed'||!/^\d{13}-[a-f0-9]{8}$/.test(manifest.id)||!Array.isArray(manifest.parts)||manifest.parts.length<1||manifest.parts.length>100)throw Error('Invalid local Chrome seed manifest');
+    const marker=path.join(root,'local-seed-applied.json');
+    if(fs.existsSync(marker)&&JSON.parse(await fsp.readFile(marker,'utf8')).id===manifest.id){console.log('Keeping the latest remote profile; local seed was already imported');return false;}
+    const encrypted=path.join(staging,'profile.enc');await fsp.writeFile(encrypted,Buffer.alloc(0),{mode:0o600});
+    for(const part of manifest.parts){
+      if(!Number.isSafeInteger(part.id)||!part.name.startsWith('local-seed-part-'+manifest.id+'-')||!/^[a-f0-9]{64}$/.test(part.sha256))throw Error('Invalid Chrome seed part');
+      const meta=await api('/releases/assets/'+part.id);
+      if(meta.name!==part.name||meta.size!==part.bytes)throw Error('Chrome seed part metadata mismatch');
+      const file=path.join(staging,'part.enc');await download(meta,file);
+      if((await fsp.stat(file)).size!==part.bytes||await fileHash(file)!==part.sha256)throw Error('Chrome seed part verification failed');
+      await pipeline(fs.createReadStream(file),fs.createWriteStream(encrypted,{flags:'a'}));await fsp.rm(file);
+    }
+    if((await fsp.stat(encrypted)).size!==manifest.bytes||await fileHash(encrypted)!==manifest.sha256)throw Error('Chrome seed verification failed');
+    const archive=path.join(staging,'profile.tar.gz');await decryptFile(encrypted,archive,key());
+    const entries=execFileSync('tar',['-tzf',archive],{encoding:'utf8',maxBuffer:32*1024*1024,windowsHide:true}).split(/\r?\n/).filter(Boolean);
+    if(entries.some(n=>!n.startsWith('User Data/')||n.split(/[\\/]/).includes('..')))throw Error('Unsafe local Chrome seed archive');
+    const extracted=path.join(staging,'extracted');await fsp.mkdir(extracted);
+    execFileSync('tar',['-xzf',archive,'-C',extracted],{windowsHide:true});
+    if(!fs.existsSync(path.join(extracted,'User Data','Local State')))throw Error('Local Chrome profile is incomplete');
+    safeManagedRoot();
+    if(fs.existsSync(root)){previous=root+'.before-seed-'+crypto.randomBytes(6).toString('hex');await fsp.rename(root,previous);}
+    try{
+      await fsp.mkdir(root,{recursive:true,mode:0o700});
+      await fsp.cp(path.join(extracted,'User Data'),profile,{recursive:true,preserveTimestamps:true});
+      await fsp.writeFile(marker,JSON.stringify({id:manifest.id,imported:new Date().toISOString()}),{mode:0o600});
+      await fsp.writeFile(path.join(root,'backup-manifest.json'),JSON.stringify({format:1,platform,local_seed:manifest.id}),{mode:0o600});
+    }catch(e){await fsp.rm(root,{recursive:true,force:true});if(previous){await fsp.rename(previous,root);previous=undefined;}throw e;}
+    console.log('Imported the encrypted local Chrome baseline; future sessions will use their newest platform backup');
+    return true;
+  }finally{
+    if(previous){if(!previous.startsWith(root+'.before-seed-'))throw Error('Unsafe previous-profile cleanup');await fsp.rm(previous,{recursive:true,force:true});}
+    await fsp.rm(staging,{recursive:true,force:true});
+  }
+}
 async function restore() {
   key();
   if(!(await api('')).private)throw Error('Browser backup repository must be private');
@@ -155,9 +208,10 @@ async function restore() {
     await fsp.mkdir(root, {recursive:true, mode:0o700});
     console.log('No prior '+platform+' browser backup; preparing a new profile');
   }
+  const importedLocal=await localSeedRestore(item);
   // Clear only transient locks, never browser databases or caches.
   for (const name of ['SingletonLock','SingletonCookie','SingletonSocket','DevToolsActivePort']) await fsp.rm(path.join(profile,name),{force:true});
-  await bookmarksRestore(item);
+  if(importedLocal)await fsp.writeFile(bookmarkBaseline,'',{mode:0o600});else await bookmarksRestore(item);
   await fsp.writeFile(readyFile, 'ready', {mode:0o600});
 }
 async function cdp(method, params={}) {
@@ -184,7 +238,8 @@ async function cookiesExport() {
   console.log('Browser session checkpoint captured (values kept private)');
 }
 async function tabsExport(){
-  const targets=(await cdp('Target.getTargets')).targetInfos.filter(t=>t.type==='page'&&!t.browserContextId&&!t.url.startsWith('devtools://'));
+  const privateContexts=(await cdp('Target.getBrowserContexts')).browserContextIds;
+  const targets=(await cdp('Target.getTargets')).targetInfos.filter(t=>t.type==='page'&&!privateContexts.includes(t.browserContextId)&&!t.url.startsWith('devtools://'));
   const windows=new Map();
   for(const target of targets){
     try{
@@ -202,7 +257,7 @@ async function tabsImport(){
     let windowId;
     for(const original of window.urls){
       const url=/^(https?:|chrome:|about:)/.test(original)?original:'about:blank';
-      const created=await cdp('Target.createTarget',{url,...(windowId===undefined?{newWindow:true}:{windowId})});
+      const created=await cdp('Target.createTarget',{url,newWindow:windowId===undefined});
       if(windowId===undefined)windowId=(await cdp('Browser.getWindowForTarget',{targetId:created.targetId})).windowId;
     }
     if(windowId!==undefined&&window.bounds){
@@ -257,6 +312,11 @@ async function launch(importCookies=true) {
     await fsp.writeFile(probeFile,JSON.stringify({value}),{mode:0o600});
   }
   if(importCookies)await tabsImport();
+  if(importCookies&&!fs.existsSync(path.join(root,'portable-tabs.json'))&&fs.existsSync(path.join(profile,'Default','Sessions'))){
+    // Let Chrome read its own session files only after cookie restoration.
+    const restore=spawn(chromePath(),['--user-data-dir='+profile,'--disk-cache-dir='+path.join(profile,'Disk Cache'),'--restore-last-session','--start-minimized','--no-first-run','--no-default-browser-check'],{detached:true,stdio:'ignore',windowsHide:true});restore.unref();
+    console.log('Requested restoration of the imported Chrome session files');
+  }
   console.log('Chrome is ready; remote debugging listens on loopback only');
 }
 async function tar(output,final=false,useSnapshot=true) {
@@ -348,5 +408,5 @@ async function main(){
   else if(command==='backup')await backup();else if(command==='watch')await watch();
   else if(command==='finish')await finish();else if(command==='session')await session();else throw Error('Unknown browser-data command');
 }
-module.exports={encryptFile,decryptFile,bookmarksSave,bookmarksRestore,release,api,root,profile,cdp,tabsExport,tabsImport};
+module.exports={encryptFile,decryptFile,bookmarksSave,bookmarksRestore,release,api,root,profile,cdp,tabsExport,tabsImport,upload,download};
 if(require.main===module)main().catch(e=>{console.error(e.message);process.exitCode=1;});
