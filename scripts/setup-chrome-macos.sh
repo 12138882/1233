@@ -4,6 +4,7 @@ test -x '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 profile="$HOME/Library/Application Support/WorkflowChrome/User Data"
 defaults write com.google.Chrome UserDataDir -string "$profile"
 defaults write com.google.Chrome DiskCacheDir -string "$profile/Disk Cache"
+defaults write com.google.Chrome RestoreOnStartup -int 1
 mkdir -p "$HOME/Desktop"
 export WORKFLOW_CHROME_PROFILE="$profile"
 python3 - <<'PY'

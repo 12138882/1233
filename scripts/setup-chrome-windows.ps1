@@ -8,6 +8,8 @@ New-Item -Path $policy -Force | Out-Null
 New-ItemProperty -Path $policy -Name UserDataDir -Value $profile -PropertyType String -Force | Out-Null
 New-ItemProperty -Path $policy -Name DiskCacheDir -Value (Join-Path $profile 'Disk Cache') -PropertyType String -Force | Out-Null
 New-ItemProperty -Path $policy -Name BackgroundModeEnabled -Value 1 -PropertyType DWord -Force | Out-Null
+New-ItemProperty -Path $policy -Name RestoreOnStartup -Value 1 -PropertyType DWord -Force | Out-Null
+$chromeArgs += ' --restore-last-session'
 
 # Windows applies the supported default association policy when the desktop user signs in.
 $associations = Join-Path $env:ProgramData 'WorkflowChrome-defaults.xml'

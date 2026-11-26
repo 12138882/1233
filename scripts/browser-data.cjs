@@ -206,7 +206,7 @@ async function launch(importCookies=true) {
   if (!fs.existsSync(readyFile)) throw Error('Browser restore has not completed');
   const args = ['--user-data-dir='+profile,'--disk-cache-dir='+path.join(profile,'Disk Cache'),
     '--remote-debugging-address=127.0.0.1','--remote-debugging-port=9222',
-    '--no-first-run','--no-default-browser-check','--no-startup-window'];
+    '--no-first-run','--no-default-browser-check','--restore-last-session','--start-minimized'];
   const child = spawn(chromePath(), args, {detached:true, stdio:'ignore',windowsHide:true}); child.unref();
   let up=false;
   for(let i=0;i<60;i++){try{await cdp('Browser.getVersion');up=true;break;}catch{await pause(1000);}}
