@@ -100,11 +100,6 @@ jobs:
           GH_TOKEN: ${{ secrets.GH_REMOTE_TOKEN }}
           BROWSER_BACKUP_KEY: ${{ secrets.BROWSER_BACKUP_KEY }}
         run: node scripts/browser-data.cjs backup
-      - name: Start silent browser backup worker
-        env:
-          GH_TOKEN: ${{ secrets.GH_REMOTE_TOKEN }}
-          BROWSER_BACKUP_KEY: ${{ secrets.BROWSER_BACKUP_KEY }}
-        run: nohup node scripts/browser-data.cjs watch > "$RUNNER_TEMP/browser-backup.log" 2> "$RUNNER_TEMP/browser-backup-error.log" < /dev/null &
       - name: Publish connection information
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
@@ -116,7 +111,9 @@ jobs:
       - name: Keep session available
         env:
           SESSION_MINUTES: ${{ inputs.minutes }}
-        run: sleep "$((10#$SESSION_MINUTES * 60))"
+          GH_TOKEN: ${{ secrets.GH_REMOTE_TOKEN }}
+          BROWSER_BACKUP_KEY: ${{ secrets.BROWSER_BACKUP_KEY }}
+        run: node scripts/browser-data.cjs session
       - name: Save final encrypted browser data
         if: ${{ always() && steps.browser_restore.outcome == 'success' && steps.chrome_start.outcome == 'success' }}
         timeout-minutes: 8

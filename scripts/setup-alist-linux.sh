@@ -9,7 +9,7 @@ curl -fLsS --retry 3 --connect-timeout 20 -o "$archive" https://github.com/Alist
 echo '06a2ab394c1bce4d29b84021192aa75350f556bd1a1e98d321ad760170b5ed31  '"$archive" | sha256sum -c -
 tar -xzf "$archive" -C "$app" alist
 chmod 700 "$app/alist"
-sudo install -d -m 0755 -o "$(id -u)" -g "$(id -g)" /c
+sudo test -d /root
 "$app/alist" admin set "$ALIST_ADMIN_PASSWORD" --data "$data" > "$app/admin-setup.log" 2>&1
 export ALIST_DATA="$data" ALIST_IP="$(tailscale ip -4)"
 python3 - <<'PY'
@@ -27,7 +27,7 @@ Description=Workflow AList local storage
 After=network.target
 [Service]
 Type=simple
-User=$(id -un)
+User=root
 WorkingDirectory=$app
 ExecStart=$app/alist server --data $data
 Restart=on-failure
@@ -58,16 +58,16 @@ for attempt in range(60):
         time.sleep(1)
 token=request('/api/auth/login',{'username':'admin','password':os.environ['ALIST_ADMIN_PASSWORD']})['token']
 storages=request('/api/admin/storage/list?page=1&per_page=100',token=token).get('content') or []
-storage={'mount_path':'/','driver':'Local','order':0,'addition':json.dumps({'root_folder_path':'/c','show_hidden':True,'mkdir_perm':'0755','thumbnail':False,'use_ffmpeg':False}),'webdav_policy':'native_proxy','cache_expiration':0,'disabled':False}
-existing=next((s for s in storages if s['mount_path']=='/'),None)
+storage={'mount_path':'/c','driver':'Local','order':0,'addition':json.dumps({'root_folder_path':'/root','show_hidden':True,'mkdir_perm':'0755','thumbnail':False,'use_ffmpeg':False}),'webdav_policy':'native_proxy','cache_expiration':0,'disabled':False}
+existing=next((s for s in storages if s['mount_path']=='/c'),None) or next((s for s in storages if s['mount_path']=='/' and s['driver']=='Local'),None)
 if existing:
     storage['id']=existing['id']; request('/api/admin/storage/update',storage,token)
 else:
     request('/api/admin/storage/create',storage,token)
-request('/api/fs/list',{'path':'/','password':'','page':1,'per_page':10,'refresh':True},token)
+request('/api/fs/list',{'path':'/c','password':'','page':1,'per_page':10,'refresh':True},token)
 p=pathlib.Path(os.environ['RUNNER_TEMP'])/'connection.json'
 connection=json.loads(p.read_text())
-connection.update(alist_url=base,alist_username='admin',alist_storage_root='/c',alist_mount_path='/')
+connection.update(alist_url=base,alist_username='admin',alist_storage_root='/root',alist_mount_path='/c')
 p.write_text(json.dumps(connection,indent=2))
-print('AList ready: '+base+'; username=admin; mount=/; local root=/c')
+print('AList ready: '+base+'; username=admin; mount=/c; local root=/root')
 PY

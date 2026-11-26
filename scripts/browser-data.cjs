@@ -20,7 +20,7 @@ const stopFile = path.join(temp, 'workflow-browser-stop');
 const lockFile = path.join(temp, 'workflow-browser-lock');
 const repo = process.env.BROWSER_BACKUP_REPOSITORY;
 const token = process.env.GH_TOKEN;
-const tag = 'browser-data';
+const tag = process.env.BROWSER_BACKUP_TAG || 'browser-data';
 const pause = ms => new Promise(r => setTimeout(r, ms));
 function key() {
   const value = Buffer.from(process.env.BROWSER_BACKUP_KEY || '', 'base64');
@@ -277,11 +277,28 @@ async function finish() {
   if(fs.existsSync(lockFile))throw Error('Browser checkpoint still busy; final backup could not start');
   await backup(true);
 }
+async function session(){
+  const minutes=Number(process.env.SESSION_MINUTES);
+  if(!Number.isInteger(minutes)||minutes<10||minutes>300)throw Error('Invalid browser session duration');
+  const deadline=Date.now()+minutes*60000;
+  let failures=0;
+  while(Date.now()<deadline){
+    await pause(Math.min(150000,Math.max(0,deadline-Date.now())));
+    if(Date.now()>=deadline)break;
+    try{
+      try{await cdp('Browser.getVersion');}catch{await launch(false);}
+      await backup();failures=0;
+    }catch(e){
+      console.error('Browser checkpoint: '+e.message);
+      if(++failures>=5)throw Error('Browser backup failed repeatedly; ending session with a final backup');
+    }
+  }
+}
 async function main(){
   const command=process.argv[2];
   if(command==='restore')await restore();else if(command==='launch')await launch();
   else if(command==='backup')await backup();else if(command==='watch')await watch();
-  else if(command==='finish')await finish();else throw Error('Unknown browser-data command');
+  else if(command==='finish')await finish();else if(command==='session')await session();else throw Error('Unknown browser-data command');
 }
-module.exports={encryptFile,decryptFile};
+module.exports={encryptFile,decryptFile,bookmarksSave,bookmarksRestore,release,api,root,profile};
 if(require.main===module)main().catch(e=>{console.error(e.message);process.exitCode=1;});

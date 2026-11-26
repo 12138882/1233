@@ -35,16 +35,17 @@ for($i=0;$i -lt 60;$i++){try{Invoke-Alist '/api/public/settings'|Out-Null;$ready
 if(-not $ready){throw 'AList server did not become ready'}
 $token=(Invoke-Alist '/api/auth/login' @{username='admin';password=$env:ALIST_ADMIN_PASSWORD}).token
 $storages=Invoke-Alist '/api/admin/storage/list?page=1&per_page=100' $null $token
-$storage=@{mount_path='/';driver='Local';order=0;addition=(@{root_folder_path='C:\';show_hidden=$true;mkdir_perm='0755';thumbnail=$false;use_ffmpeg=$false}|ConvertTo-Json -Compress);webdav_policy='native_proxy';cache_expiration=0;disabled=$false}
-$existing=$storages.content|Where-Object {$_.mount_path -eq '/'}|Select-Object -First 1
+$storage=@{mount_path='/c';driver='Local';order=0;addition=(@{root_folder_path='C:\';show_hidden=$true;mkdir_perm='0755';thumbnail=$false;use_ffmpeg=$false}|ConvertTo-Json -Compress);webdav_policy='native_proxy';cache_expiration=0;disabled=$false}
+$existing=$storages.content|Where-Object {$_.mount_path -eq '/c'}|Select-Object -First 1
+if(-not $existing){$existing=$storages.content|Where-Object {$_.mount_path -eq '/' -and $_.driver -eq 'Local'}|Select-Object -First 1}
 if($existing){$storage.id=$existing.id;Invoke-Alist '/api/admin/storage/update' $storage $token|Out-Null}else{Invoke-Alist '/api/admin/storage/create' $storage $token|Out-Null}
-Invoke-Alist '/api/fs/list' @{path='/';password='';page=1;per_page=10;refresh=$true} $token | Out-Null
+Invoke-Alist '/api/fs/list' @{path='/c';password='';page=1;per_page=10;refresh=$true} $token | Out-Null
 $connectionFile=Join-Path $env:RUNNER_TEMP 'connection.json'
 $connection=Get-Content -LiteralPath $connectionFile -Raw|ConvertFrom-Json
-foreach($item in @{alist_url=$base;alist_username='admin';alist_storage_root='C:\';alist_mount_path='/'}.GetEnumerator()){$connection|Add-Member -NotePropertyName $item.Key -NotePropertyValue $item.Value -Force}
+foreach($item in @{alist_url=$base;alist_username='admin';alist_storage_root='C:\';alist_mount_path='/c'}.GetEnumerator()){$connection|Add-Member -NotePropertyName $item.Key -NotePropertyValue $item.Value -Force}
 $connection|ConvertTo-Json -Depth 12|Set-Content -LiteralPath $connectionFile -Encoding utf8
 $desktop=[Environment]::GetFolderPath('Desktop')
 $sites=[ordered]@{ChatGPT='https://chatgpt.com/';X='https://x.com/';YouTube='https://www.youtube.com/';Google='https://www.google.com/';Baidu='https://www.baidu.com/';Gemini='https://gemini.google.com/';AList=$base}
 foreach($site in $sites.GetEnumerator()){[IO.File]::WriteAllText((Join-Path $desktop ($site.Key+'.url')), ('[InternetShortcut]'+"`r`nURL="+$site.Value+"`r`n"),[Text.Encoding]::ASCII)}
-Write-Host ('AList ready: '+$base+'; username=admin; mount=/; local root=C:\')
+Write-Host ('AList ready: '+$base+'; username=admin; mount=/c; local root=C:\')
 Write-Host 'Desktop shortcuts created: ChatGPT, X, YouTube, Google, Baidu, Gemini, AList'

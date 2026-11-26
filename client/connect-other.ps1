@@ -249,7 +249,7 @@ try {
         $options = @('-i',$sshKey,'-p',[string]$connection.ssh_port,'-o','IdentitiesOnly=yes','-o','StrictHostKeyChecking=yes','-o',('UserKnownHostsFile='+$knownHosts),'-o',('HostKeyAlias='+$alias))
         $destination = $connection.username+'@'+$connection.ip
         if ($TestConnection) {
-            $remoteCommand = if ($System -eq 'linux') { 'printf "SSH_READY\n"; sysctl -n net.ipv4.ip_forward net.ipv6.conf.all.forwarding' } else { 'printf "SSH_READY\n"; sysctl -n net.inet.ip.forwarding net.inet6.ip6.forwarding' }
+            $remoteCommand = if ($System -eq 'linux') { 'echo SSH_READY; sysctl -n net.ipv4.ip_forward net.ipv6.conf.all.forwarding' } else { 'echo SSH_READY; sysctl -n net.inet.ip.forwarding net.inet6.ip6.forwarding' }
             & ssh.exe @options -o BatchMode=yes -o ConnectTimeout=15 $destination $remoteCommand
             if ($LASTEXITCODE -ne 0) { throw 'SSH 连接检查失败。' }
             return
@@ -257,17 +257,31 @@ try {
             if ($System -eq 'macos' -and -not $connection.rdp_listening) { Write-Host 'macOS 桌面服务未就绪，先连接 SSH。' }
             & ssh.exe @options $destination
         } else {
-            Write-Host 'macOS 桌面需要在系统设置中授权屏幕录制和辅助功能。关闭此窗口会断开隧道。'
-            $tunnelArgs = $options + @('-o','BatchMode=yes','-o','ExitOnForwardFailure=yes','-N','-L','127.0.0.1:13389:127.0.0.1:3389',$destination)
+            Write-Host '正在建立 macOS 桌面隧道。关闭此窗口会断开连接。'
+            $reservation = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback,0)
+            $reservation.Start()
+            $localPort = $reservation.LocalEndpoint.Port
+            $reservation.Stop()
+            $tunnelArgs = $options + @('-o','BatchMode=yes','-o','ConnectTimeout=20','-o','ServerAliveInterval=15','-o','ServerAliveCountMax=3','-o','ExitOnForwardFailure=yes','-N','-L',("127.0.0.1:${localPort}:127.0.0.1:3389"),$destination)
             $quoted = $tunnelArgs | ForEach-Object { '"'+$_.Replace('"','\"')+'"' }
-            $tunnel = Start-Process -FilePath ssh.exe -ArgumentList $quoted -WindowStyle Hidden -PassThru
+            $errorLog = Join-Path $PSScriptRoot ("macos-tunnel-$PID.log")
+            $tunnel = Start-Process -FilePath ssh.exe -ArgumentList $quoted -WindowStyle Hidden -RedirectStandardError $errorLog -PassThru
+            $rdp = Join-Path $PSScriptRoot ("macos-$PID.rdp")
             try {
-                Start-Sleep -Seconds 3
-                if ($tunnel.HasExited) { throw 'SSH 隧道未能启动。' }
-                $rdp = Join-Path $PSScriptRoot 'macos.rdp'
-                @('full address:s:127.0.0.1:13389','enablecredsspsupport:i:0','authentication level:i:2','prompt for credentials:i:0') | Set-Content -LiteralPath $rdp -Encoding Unicode
+                $ready = $false
+                for ($attempt=0; $attempt -lt 60; $attempt++) {
+                    if ($tunnel.HasExited) { throw ('SSH 隧道未能启动：'+(Get-Content -LiteralPath $errorLog -Raw -ErrorAction SilentlyContinue)) }
+                    $probe = New-Object Net.Sockets.TcpClient
+                    try {if($probe.ConnectAsync('127.0.0.1',$localPort).Wait(500) -and $probe.Connected){$ready=$true;break}} catch {} finally {$probe.Dispose()}
+                    Start-Sleep -Milliseconds 500
+                }
+                if (-not $ready) {throw '等待 macOS 桌面隧道超时，请重试。'}
+                @("full address:s:127.0.0.1:$localPort",'enablecredsspsupport:i:0','authentication level:i:2','prompt for credentials:i:0') | Set-Content -LiteralPath $rdp -Encoding Unicode
                 Start-Process -FilePath mstsc.exe -ArgumentList @('"'+$rdp+'"') -Wait
-            } finally { if (-not $tunnel.HasExited) { Stop-Process -Id $tunnel.Id -ErrorAction SilentlyContinue } }
+            } finally {
+                if (-not $tunnel.HasExited) { Stop-Process -Id $tunnel.Id -ErrorAction SilentlyContinue }
+                Remove-Item -LiteralPath $rdp,$errorLog -Force -ErrorAction SilentlyContinue
+            }
         }
     }
 } finally { $client.Dispose(); $handler.Dispose() }
