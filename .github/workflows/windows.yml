@@ -36,7 +36,8 @@ jobs:
       - uses: tailscale/github-action@v4
         with:
           authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
-          hostname: remote-windows-${{ github.run_id }}
+          hostname: remote-windows-1233
+          args: --advertise-exit-node --accept-dns=false
       - name: Configure private RDP
         env:
           DESKTOP_PASSWORD: ${{ secrets.WINDOWS_DESKTOP_PASSWORD }}

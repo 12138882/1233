@@ -25,6 +25,8 @@ python3 - <<'PY'
 import json, os, pathlib, subprocess
 data = {'system':'linux','ip':os.environ['TS_IP'],'username':os.environ['USER'],'ssh_port':22,'run_id':os.environ['GITHUB_RUN_ID']}
 data['ssh_host_key'] = subprocess.check_output(['sudo','ssh-keygen','-y','-f','/etc/ssh/workflow_host_ed25519_key'],text=True).strip()
+data['tailnet'] = json.loads(subprocess.check_output(['tailscale','status','--json'],text=True)).get('CurrentTailnet',{}).get('MagicDNSSuffix','')
+data['hostname'] = 'remote-linux-1233'
 (pathlib.Path(os.environ['RUNNER_TEMP'])/'connection.json').write_text(json.dumps(data,indent=2))
 with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as f:
     f.write(f"SSH: `{data['username']}@{data['ip']}`\n\nIPv4 and IPv6 forwarding enabled.\n")

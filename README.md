@@ -22,7 +22,7 @@ Never put the client SSH private key or account tokens in this repository. The t
 
 Each workflow publishes a short-lived artifact named `windows-connection`, `linux-connection`, or `macos-connection`. It contains the Tailscale address, username, and public SSH host key, but no passwords or private keys.
 
-Linux SSH only listens on its Tailscale address. Windows RDP uses NLA and an inbound firewall rule scoped to the Tailscale interface. IPv4 and IPv6 forwarding are enabled at setup.
+Linux SSH only listens on its Tailscale address. Windows RDP uses NLA and an inbound firewall rule scoped to the Tailscale interface. IPv4 and IPv6 forwarding are enabled at setup. All three systems advertise themselves as Tailscale exit nodes. Approve "Use as exit node" for each device in the Tailscale admin console before selecting one as your client's internet exit. The auth key used to join the tailnet cannot approve these routes through the administrative API.
 
 macOS uses [mac-rdp-server](https://github.com/DawidAdamski/mac-rdp-server). It stays bound to `127.0.0.1:3389`; connect with an authenticated SSH tunnel. Its screen recording and accessibility permissions must be authorized in macOS settings. Installing the binary and opening a TCP port does not prove that screen capture and input work.
 

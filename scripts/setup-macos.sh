@@ -21,6 +21,8 @@ python3 - <<'PY'
 import getpass, json, os, pathlib, subprocess
 data = {'system':'macos','ip':os.environ['TS_IP'],'username':getpass.getuser(),'ssh_port':2222,'run_id':os.environ['GITHUB_RUN_ID'],'rdp_listening':False,'rdp_permissions':'RDP server not installed or unavailable'}
 data['ssh_host_key'] = subprocess.check_output(['sudo','ssh-keygen','-y','-f','/etc/ssh/workflow_host_ed25519_key'],text=True).strip()
+data['tailnet'] = json.loads(subprocess.check_output(['tailscale','status','--json'],text=True)).get('CurrentTailnet',{}).get('MagicDNSSuffix','')
+data['hostname'] = 'remote-macos-1233'
 (pathlib.Path(os.environ['RUNNER_TEMP'])/'connection.json').write_text(json.dumps(data,indent=2))
 with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as f:
     f.write(f"SSH: `{data['username']}@{data['ip']}`\n\nRDP uses an authenticated SSH tunnel to localhost:3389. macOS screen capture and accessibility permissions require manual authorization.\n")

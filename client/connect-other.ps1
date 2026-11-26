@@ -4,7 +4,8 @@ param(
     [ValidateRange(10,300)][int]$Minutes = 60,
     [switch]$NoConnect,
     [switch]$StatusOnly,
-    [switch]$SshOnly
+    [switch]$SshOnly,
+    [switch]$TestConnection
 )
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -74,20 +75,41 @@ function Unprotect-LocalValue {
 function Ensure-Tailscale {
     $ts = Join-Path $env:ProgramFiles 'Tailscale\tailscale.exe'
     if (-not (Test-Path -LiteralPath $ts)) { throw '请先安装 Tailscale：https://tailscale.com/download/windows' }
-    $statusText = & $ts status --json 2>$null
-    $state = $null
-    try { $state = $statusText | ConvertFrom-Json } catch {}
-    if ($state.BackendState -eq 'Running') { return }
-    if (-not $config.tailscale_auth_protected) { throw '请先打开 Tailscale 并登录与工作流相同的网络。' }
-    if ($state.BackendState -notin @('NoState','NeedsLogin','Stopped')) { throw 'Tailscale 尚未就绪，请先打开客户端检查状态。' }
-    $keyPath = Join-Path $PSScriptRoot ('auth-'+[guid]::NewGuid().ToString('N')+'.tmp')
+    $expectedTailnet = $connection.tailnet
+    if (-not $expectedTailnet) { $expectedTailnet = $config.expected_tailnet }
+    $mutex = New-Object Threading.Mutex($false, 'Local\SkyWorkflowRemote-Tailscale')
+    $acquired = $false
+    $keyPath = $null
     try {
+        $acquired = $mutex.WaitOne(90000)
+        if (-not $acquired) { throw '另一个连接窗口正在登录 Tailscale，请稍后重试。' }
+        $statusText = & $ts status --json 2>$null
+        $state = $null
+        try { $state = $statusText | ConvertFrom-Json } catch {}
+        $sameNetwork = (-not $expectedTailnet -or $state.CurrentTailnet.MagicDNSSuffix -eq $expectedTailnet)
+        if ($state.BackendState -eq 'Running' -and $sameNetwork) { return }
+        if (-not $config.tailscale_auth_protected) { throw '请先打开 Tailscale 并登录与工作流相同的网络。' }
+        if ($state.BackendState -eq 'Running' -and -not $sameNetwork) { Write-Host '本机与远程设备不在同一网络，正在保留原账号并登录工作流网络。' }
+        $keyPath = Join-Path $PSScriptRoot ('auth-'+[guid]::NewGuid().ToString('N')+'.tmp')
         [IO.File]::WriteAllText($keyPath, (Unprotect-LocalValue $config.tailscale_auth_protected))
         $identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
         & icacls.exe $keyPath /inheritance:r /grant:r "${identity}:(F)" | Out-Null
-        & $ts up "--auth-key=file:$keyPath" --accept-dns=false --timeout=30s
-        if ($LASTEXITCODE -ne 0) { throw 'Tailscale 登录失败，请检查密钥或手动登录。' }
-    } finally { if (Test-Path -LiteralPath $keyPath) { Remove-Item -LiteralPath $keyPath -Force } }
+        & $ts login "--auth-key=file:$keyPath" --accept-dns=false --nickname=github-remote-1233 --timeout=60s
+        $loginExit = $LASTEXITCODE
+        $deadline = [DateTime]::UtcNow.AddSeconds(30)
+        do {
+            $statusText = & $ts status --json 2>$null
+            try { $state = $statusText | ConvertFrom-Json } catch {}
+            if ($state.BackendState -eq 'Running' -and (-not $expectedTailnet -or $state.CurrentTailnet.MagicDNSSuffix -eq $expectedTailnet)) { return }
+            Start-Sleep -Seconds 2
+        } while ([DateTime]::UtcNow -lt $deadline)
+        if ($state.BackendState -eq 'NeedsMachineAuth') { throw '本机已申请加入网络，需要管理员在 Tailscale 后台批准此设备。' }
+        throw "Tailscale 未进入目标网络：状态=$($state.BackendState)，登录退出码=$loginExit。请打开客户端查看网络和设备审批状态。"
+    } finally {
+        if ($keyPath -and (Test-Path -LiteralPath $keyPath)) { Remove-Item -LiteralPath $keyPath -Force }
+        if ($acquired) { $mutex.ReleaseMutex() }
+        $mutex.Dispose()
+    }
 }
 
 function Get-Connection {
@@ -127,6 +149,15 @@ try {
     if ($NoConnect) { $connection | ConvertTo-Json -Depth 8; return }
     Ensure-Tailscale
     if ($System -eq 'windows') {
+        if ($TestConnection) {
+            $tcp = New-Object Net.Sockets.TcpClient
+            try {
+                if (-not $tcp.ConnectAsync($connection.ip,3389).Wait(10000)) { throw 'RDP TCP 连接超时。' }
+                if (-not $tcp.Connected) { throw 'RDP 端口不可用。' }
+                Write-Output ('Windows RDP port reachable: '+$connection.ip+':3389')
+            } finally { $tcp.Dispose() }
+            return
+        }
         $password = Unprotect-LocalValue $config.password_protected
         & cmdkey.exe "/generic:TERMSRV/$($connection.ip)" '/user:runneradmin' "/pass:$password" | Out-Null
         $password = $null
@@ -139,7 +170,12 @@ try {
         if (-not $expected -or -not $connection.ssh_host_key -or -not $expected.StartsWith($alias+' '+$connection.ssh_host_key)) { throw '远程 SSH 主机密钥与本机记录不符，已停止连接。' }
         $options = @('-i',$sshKey,'-p',[string]$connection.ssh_port,'-o','IdentitiesOnly=yes','-o','StrictHostKeyChecking=yes','-o',('UserKnownHostsFile='+$knownHosts),'-o',('HostKeyAlias='+$alias))
         $destination = $connection.username+'@'+$connection.ip
-        if ($System -eq 'linux' -or $SshOnly -or -not $connection.rdp_listening) {
+        if ($TestConnection) {
+            $remoteCommand = if ($System -eq 'linux') { 'printf "SSH_READY\n"; sysctl -n net.ipv4.ip_forward net.ipv6.conf.all.forwarding' } else { 'printf "SSH_READY\n"; sysctl -n net.inet.ip.forwarding net.inet6.ip6.forwarding' }
+            & ssh.exe @options -o BatchMode=yes -o ConnectTimeout=15 $destination $remoteCommand
+            if ($LASTEXITCODE -ne 0) { throw 'SSH 连接检查失败。' }
+            return
+        } elseif ($System -eq 'linux' -or $SshOnly -or -not $connection.rdp_listening) {
             if ($System -eq 'macos' -and -not $connection.rdp_listening) { Write-Host 'macOS 桌面服务未就绪，先连接 SSH。' }
             & ssh.exe @options $destination
         } else {

@@ -36,7 +36,8 @@ jobs:
       - uses: tailscale/github-action@v4
         with:
           authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
-          hostname: remote-linux-${{ github.run_id }}
+          hostname: remote-linux-1233
+          args: --advertise-exit-node --accept-dns=false
       - name: Configure SSH and forwarding
         env:
           SSH_PUBLIC_KEY: ${{ secrets.SSH_PUBLIC_KEY }}
