@@ -12,6 +12,8 @@ permissions:
 concurrency:
   group: remote-windows
   cancel-in-progress: false
+env:
+  BROWSER_BACKUP_REPOSITORY: 12138882/1233-browser-data
 jobs:
   desktop:
     runs-on: windows-latest
@@ -46,6 +48,34 @@ jobs:
         env:
           ALIST_ADMIN_PASSWORD: ${{ secrets.ALIST_ADMIN_PASSWORD }}
         run: ./scripts/setup-alist-windows.ps1
+      - name: Configure quiet desktop startup
+        run: ./scripts/quiet-windows.ps1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Restore private Chrome data
+        id: browser_restore
+        env:
+          GH_TOKEN: ${{ secrets.GH_REMOTE_TOKEN }}
+          BROWSER_BACKUP_KEY: ${{ secrets.BROWSER_BACKUP_KEY }}
+        run: node scripts/browser-data.cjs restore
+      - name: Configure Chrome shortcuts
+        run: ./scripts/setup-chrome-windows.ps1
+      - name: Start Chrome in background
+        id: chrome_start
+        run: node scripts/browser-data.cjs launch
+      - name: Save initial encrypted browser checkpoint
+        env:
+          GH_TOKEN: ${{ secrets.GH_REMOTE_TOKEN }}
+          BROWSER_BACKUP_KEY: ${{ secrets.BROWSER_BACKUP_KEY }}
+        run: node scripts/browser-data.cjs backup
+      - name: Start silent browser backup worker
+        env:
+          GH_TOKEN: ${{ secrets.GH_REMOTE_TOKEN }}
+          BROWSER_BACKUP_KEY: ${{ secrets.BROWSER_BACKUP_KEY }}
+        run: |
+          $script = Join-Path $env:GITHUB_WORKSPACE 'scripts/browser-data.cjs'
+          Start-Process -FilePath (Get-Command node).Source -ArgumentList @(('"'+$script+'"'),'watch') -WorkingDirectory $env:GITHUB_WORKSPACE -WindowStyle Hidden -RedirectStandardOutput (Join-Path $env:RUNNER_TEMP 'browser-backup.log') -RedirectStandardError (Join-Path $env:RUNNER_TEMP 'browser-backup-error.log')
       - name: Publish connection information
         uses: actions/upload-artifact@v4
         with:
@@ -57,3 +87,10 @@ jobs:
         env:
           SESSION_MINUTES: ${{ inputs.minutes }}
         run: Start-Sleep -Seconds ([int]$env:SESSION_MINUTES * 60)
+      - name: Save final encrypted browser data
+        if: ${{ always() && steps.browser_restore.outcome == 'success' && steps.chrome_start.outcome == 'success' }}
+        timeout-minutes: 8
+        env:
+          GH_TOKEN: ${{ secrets.GH_REMOTE_TOKEN }}
+          BROWSER_BACKUP_KEY: ${{ secrets.BROWSER_BACKUP_KEY }}
+        run: node scripts/browser-data.cjs finish

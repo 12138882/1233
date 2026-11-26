@@ -12,6 +12,8 @@ permissions:
 concurrency:
   group: remote-macos
   cancel-in-progress: false
+env:
+  BROWSER_BACKUP_REPOSITORY: 12138882/1233-browser-data
 jobs:
   desktop:
     runs-on: macos-15-intel
@@ -79,6 +81,30 @@ jobs:
           data['rdp_permissions'] = (p.parent / 'rdp-permissions.txt').read_text(errors='replace')
           p.write_text(json.dumps(data, indent=2))
           PY
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Restore private Chrome data
+        id: browser_restore
+        env:
+          GH_TOKEN: ${{ secrets.GH_REMOTE_TOKEN }}
+          BROWSER_BACKUP_KEY: ${{ secrets.BROWSER_BACKUP_KEY }}
+        run: node scripts/browser-data.cjs restore
+      - name: Configure Chrome shortcuts
+        run: bash scripts/setup-chrome-macos.sh
+      - name: Start Chrome in background
+        id: chrome_start
+        run: node scripts/browser-data.cjs launch
+      - name: Save initial encrypted browser checkpoint
+        env:
+          GH_TOKEN: ${{ secrets.GH_REMOTE_TOKEN }}
+          BROWSER_BACKUP_KEY: ${{ secrets.BROWSER_BACKUP_KEY }}
+        run: node scripts/browser-data.cjs backup
+      - name: Start silent browser backup worker
+        env:
+          GH_TOKEN: ${{ secrets.GH_REMOTE_TOKEN }}
+          BROWSER_BACKUP_KEY: ${{ secrets.BROWSER_BACKUP_KEY }}
+        run: nohup node scripts/browser-data.cjs watch > "$RUNNER_TEMP/browser-backup.log" 2> "$RUNNER_TEMP/browser-backup-error.log" < /dev/null &
       - name: Publish connection information
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
@@ -91,3 +117,10 @@ jobs:
         env:
           SESSION_MINUTES: ${{ inputs.minutes }}
         run: sleep "$((10#$SESSION_MINUTES * 60))"
+      - name: Save final encrypted browser data
+        if: ${{ always() && steps.browser_restore.outcome == 'success' && steps.chrome_start.outcome == 'success' }}
+        timeout-minutes: 8
+        env:
+          GH_TOKEN: ${{ secrets.GH_REMOTE_TOKEN }}
+          BROWSER_BACKUP_KEY: ${{ secrets.BROWSER_BACKUP_KEY }}
+        run: node scripts/browser-data.cjs finish

@@ -18,8 +18,7 @@ $config.scheme.http_port = 5244
 $config.scheme.https_port = -1
 [IO.File]::WriteAllText($configFile, ($config|ConvertTo-Json -Depth 30), (New-Object Text.UTF8Encoding($false)))
 Start-Process -FilePath $exe -ArgumentList @('server','--data',('"'+$data+'"')) -WorkingDirectory $app -WindowStyle Hidden -RedirectStandardOutput (Join-Path $app 'server.log') -RedirectStandardError (Join-Path $app 'server-error.log')
-$adapter = Get-NetAdapter | Where-Object {$_.InterfaceDescription -like '*Tailscale*'} | Select-Object -First 1
-New-NetFirewallRule -DisplayName 'Workflow AList over Tailscale' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 5244 -InterfaceAlias $adapter.Name -RemoteAddress '100.64.0.0/10','fd7a:115c:a1e0::/48' | Out-Null
+New-NetFirewallRule -DisplayName 'Workflow AList over Tailscale' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 5244 -LocalAddress $ip -RemoteAddress '100.64.0.0/10' -Profile Any | Out-Null
 $base = "http://${ip}:5244"
 function Invoke-Alist {
     param([string]$Path,$Body=$null,[string]$Token='')

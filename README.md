@@ -16,6 +16,8 @@ Windows and macOS are manually dispatched with a `minutes` input between 10 and 
 | `MACOS_SSH_HOST_KEY` | Private Ed25519 host key for macOS |
 | `WINDOWS_DESKTOP_PASSWORD` | Password for the Windows `runneradmin` account |
 | `ALIST_ADMIN_PASSWORD` | AList admin password for Windows and Linux |
+| `BROWSER_BACKUP_KEY` | Random 32-byte AES-256-GCM key, base64 encoded |
+| `GH_REMOTE_TOKEN` | Access to the separate private browser backup repository |
 
 Never put the client SSH private key or account tokens in this repository. The tailnet policy must allow your client to reach port 22 (SSH) and/or 3389 (Windows RDP).
 
@@ -36,3 +38,13 @@ AList is installed by default on Linux and Windows, listening on the Tailscale a
 Set repository variable `LINUX_AUTORUN=false` before cancelling Linux to stop automatic renewal. The local stop launcher performs both actions. Turning off the maintenance workflow or changing the variable stops scheduled recovery; a workflow cancellation alone is treated as a recoverable interruption while automatic maintenance is enabled.
 
 Passwords and the optional local Tailscale auth key are protected using Windows DPAPI for the current user. The client SSH key and configuration files are installed with user-only access. The GitHub token is read from a local file and its encrypted backup is stored in `GH_REMOTE_TOKEN`; no workflow requires or exposes its plaintext in source code.
+
+## Remote Chrome data
+
+Windows and macOS restore their complete dedicated Chrome user-data directory from the private repository `12138882/1233-browser-data`. This includes all profiles, bookmarks, history, extensions, cookies, website storage and caches under that directory. Data is encrypted locally using AES-256-GCM before upload. Windows and macOS archives are independent. The previous complete snapshot is retained until the replacement is verified; two snapshots per system are kept. Backups occur approximately every 150 seconds and at normal workflow cleanup. Forced termination, host failure, or a failed upload can lose changes made since the last successful snapshot.
+
+The default profile's bookmarks are also shared as a separate encrypted file: each startup reads the latest shared bookmarks, and changed bookmarks are uploaded with the next checkpoint. Concurrent edits use the last uploaded version; full platform snapshots retain their own copies. Sharing does not grant repository access to other accounts automatically.
+
+Chrome uses a dedicated user-data directory and a loopback-only debugging endpoint to checkpoint and restore cookies without copying operating-system encryption keys. The full raw profile is also preserved. Cookies are not a guarantee of continued login: Google, ChatGPT and other services can require authentication again; OS-bound saved passwords, passkeys, client certificates and device-bound credentials are not made portable by copying a profile. This does not back up Downloads or any browser on the connecting computer.
+
+Website shortcuts explicitly open Chrome with this profile. Windows initializes services and backups in the background, suppresses Server Manager and Tailscale foreground startup, and keeps Tailscale running unattended. The helper console remains visible while retrieving a remote session or reporting an error.
