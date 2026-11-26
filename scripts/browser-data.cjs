@@ -247,6 +247,7 @@ async function backup(final=false) {
   let lock;
   try { lock=await fsp.open(lockFile,'wx'); }
   catch(e){if(e.code==='EEXIST')return;throw e;}
+  await lock.writeFile(JSON.stringify({pid:process.pid,started:Date.now()}));
   let staging;
   try {
     if(!fs.existsSync(path.join(profile,'Local State')))throw Error('Chrome profile has not initialized');
@@ -273,7 +274,13 @@ async function watch() {
 }
 async function finish() {
   await fsp.writeFile(stopFile,'stop');
-  for(let i=0;i<360&&fs.existsSync(lockFile);i++)await pause(1000);
+  for(let i=0;i<360&&fs.existsSync(lockFile);i++){
+    try{
+      const owner=JSON.parse(await fsp.readFile(lockFile,'utf8'));
+      if(Number.isInteger(owner.pid)){try{process.kill(owner.pid,0);}catch(e){if(e.code==='ESRCH'){await fsp.rm(lockFile,{force:true});break;}}}
+    }catch{}
+    await pause(1000);
+  }
   if(fs.existsSync(lockFile))throw Error('Browser checkpoint still busy; final backup could not start');
   await backup(true);
 }

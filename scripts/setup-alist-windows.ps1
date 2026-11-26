@@ -18,7 +18,9 @@ $config.scheme.http_port = 5244
 $config.scheme.https_port = -1
 [IO.File]::WriteAllText($configFile, ($config|ConvertTo-Json -Depth 30), (New-Object Text.UTF8Encoding($false)))
 Start-Process -FilePath $exe -ArgumentList @('server','--data',('"'+$data+'"')) -WorkingDirectory $app -WindowStyle Hidden -RedirectStandardOutput (Join-Path $app 'server.log') -RedirectStandardError (Join-Path $app 'server-error.log')
-New-NetFirewallRule -DisplayName 'Workflow AList over Tailscale' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 5244 -LocalAddress $ip -RemoteAddress '100.64.0.0/10' -Profile Any | Out-Null
+# The server binds only the Tailscale IP. Program filtering also works when the
+# Windows Tailscale stack injects a proxied connection through another interface.
+New-NetFirewallRule -DisplayName 'Workflow AList over Tailscale' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 5244 -Program $exe -Profile Any | Out-Null
 $base = "http://${ip}:5244"
 function Invoke-Alist {
     param([string]$Path,$Body=$null,[string]$Token='')
@@ -42,6 +44,8 @@ if($existing){$storage.id=$existing.id;Invoke-Alist '/api/admin/storage/update' 
 Invoke-Alist '/api/fs/list' @{path='/c';password='';page=1;per_page=10;refresh=$true} $token | Out-Null
 $connectionFile=Join-Path $env:RUNNER_TEMP 'connection.json'
 $connection=Get-Content -LiteralPath $connectionFile -Raw|ConvertFrom-Json
+$listeners=@(Get-NetTCPConnection -LocalPort 5244 -State Listen|Select-Object -ExpandProperty LocalAddress)
+if($listeners.Count -ne 1 -or $listeners[0] -ne $ip){throw 'AList must listen exclusively on the Tailscale address'}
 foreach($item in @{alist_url=$base;alist_username='admin';alist_storage_root='C:\';alist_mount_path='/c'}.GetEnumerator()){$connection|Add-Member -NotePropertyName $item.Key -NotePropertyValue $item.Value -Force}
 $connection|ConvertTo-Json -Depth 12|Set-Content -LiteralPath $connectionFile -Encoding utf8
 $desktop=[Environment]::GetFolderPath('Desktop')
