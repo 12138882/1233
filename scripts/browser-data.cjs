@@ -135,6 +135,8 @@ function safeManagedRoot(){
 async function localSeedRestore(item){
   if(!item)return false;
   const pointer=process.env.BROWSER_LOCAL_SEED_MANIFEST_ID;
+  const priorMarker=path.join(root,'local-seed-applied.json');
+  if(pointer&&fs.existsSync(priorMarker)&&String(JSON.parse(await fsp.readFile(priorMarker,'utf8')).manifest_id)===pointer){console.log('Keeping the newest remote data; the baseline is already applied');return false;}
   const asset=pointer&&/^\d+$/.test(pointer)?await api('/releases/assets/'+pointer):
     (await assets(item)).filter(a=>a.name.startsWith('local-seed-manifest-')&&a.name.endsWith('.enc')).sort((a,b)=>b.id-a.id)[0];
   if(!asset)return false;
@@ -169,7 +171,7 @@ async function localSeedRestore(item){
     try{
       await fsp.mkdir(root,{recursive:true,mode:0o700});
       await fsp.cp(path.join(extracted,'User Data'),profile,{recursive:true,preserveTimestamps:true});
-      await fsp.writeFile(marker,JSON.stringify({id:manifest.id,imported:new Date().toISOString()}),{mode:0o600});
+      await fsp.writeFile(marker,JSON.stringify({id:manifest.id,manifest_id:asset.id,imported:new Date().toISOString()}),{mode:0o600});
       await fsp.writeFile(path.join(root,'backup-manifest.json'),JSON.stringify({format:1,platform,local_seed:manifest.id}),{mode:0o600});
     }catch(e){await fsp.rm(root,{recursive:true,force:true});if(previous){await fsp.rename(previous,root);previous=undefined;}throw e;}
     console.log('Imported the encrypted local Chrome baseline; future sessions will use their newest platform backup');
@@ -311,12 +313,16 @@ async function launch(importCookies=true) {
     await cdp('Storage.setCookies',{cookies:[{name:'workflow_backup_probe',value,domain:'workflow-backup.invalid',path:'/',secure:true,httpOnly:true,expires:Date.now()/1000+365*86400}]});
     await fsp.writeFile(probeFile,JSON.stringify({value}),{mode:0o600});
   }
-  if(importCookies)await tabsImport();
-  if(importCookies&&!fs.existsSync(path.join(root,'portable-tabs.json'))&&fs.existsSync(path.join(profile,'Default','Sessions'))){
+  const tabFile=path.join(root,'portable-tabs.json');
+  const savedTabs=fs.existsSync(tabFile)?JSON.parse(await fsp.readFile(tabFile,'utf8')):null;
+  let nativeRestored=false;
+  if(importCookies&&(!savedTabs||savedTabs.some(w=>w.urls.length))&&fs.existsSync(path.join(profile,'Default','Sessions'))){
     // Let Chrome read its own session files only after cookie restoration.
     const restore=spawn(chromePath(),['--user-data-dir='+profile,'--disk-cache-dir='+path.join(profile,'Disk Cache'),'--restore-last-session','--start-minimized','--no-first-run','--no-default-browser-check'],{detached:true,stdio:'ignore',windowsHide:true});restore.unref();
     console.log('Requested restoration of the imported Chrome session files');
+    for(let i=0;i<15;i++){if((await cdp('Target.getTargets')).targetInfos.some(t=>t.type==='page')){nativeRestored=true;break;}await pause(1000);}
   }
+  if(importCookies&&!nativeRestored)await tabsImport();
   console.log('Chrome is ready; remote debugging listens on loopback only');
 }
 async function tar(output,final=false,useSnapshot=true) {
@@ -408,5 +414,5 @@ async function main(){
   else if(command==='backup')await backup();else if(command==='watch')await watch();
   else if(command==='finish')await finish();else if(command==='session')await session();else throw Error('Unknown browser-data command');
 }
-module.exports={encryptFile,decryptFile,bookmarksSave,bookmarksRestore,release,api,root,profile,cdp,tabsExport,tabsImport,upload,download};
+module.exports={encryptFile,decryptFile,bookmarksSave,bookmarksRestore,release,api,root,profile,cdp,tabsExport,tabsImport,upload,download,localSeedRestore};
 if(require.main===module)main().catch(e=>{console.error(e.message);process.exitCode=1;});
