@@ -16,7 +16,7 @@ try{
     $source=$snapshot.DeviceObject+'\'+$rootPath.Substring($volume.Length)
     # Snapshot files are readable even when Chrome holds an exclusive lock on the live file.
     $errorLog=$archivePath+'.errors'
-    & tar '--exclude=SingletonLock' '--exclude=SingletonSocket' '--exclude=SingletonCookie' '--exclude=DevToolsActivePort' '--exclude=LOCK' '--exclude=lockfile' -czf $archivePath -C $source . 2> $errorLog
+    & python (Join-Path $PSScriptRoot 'archive-profile.py') $source $archivePath full 2> $errorLog
     if($LASTEXITCODE -ne 0){throw ('Snapshot archive failed: '+$LASTEXITCODE)}
     Remove-Item -LiteralPath $errorLog -Force -ErrorAction SilentlyContinue
 }finally{

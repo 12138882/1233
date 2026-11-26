@@ -335,9 +335,10 @@ async function tar(output,final=false,useSnapshot=true) {
       // The exported cookie store preserves values while Chrome locks this raw DB.
       for(const p of ['Default/Network/Cookies','Default/Cookies'])for(const suffix of ['','-journal','-wal','-shm'])args.unshift('--exclude=./User Data/'+p+suffix);
     }
-    const child = spawn(snapshot?'pwsh':'tar',snapshot?[
+    const pythonArchive=platform==='windows'&&!snapshot;
+    const child = spawn(snapshot?'pwsh':pythonArchive?'python':'tar',snapshot?[
       '-NoProfile','-NonInteractive','-File',path.join(__dirname,'archive-chrome-windows.ps1'),'-Root',root,'-Archive',output
-    ]:args,{windowsHide:true,stdio:['ignore','ignore','pipe'],timeout:snapshot?30000:180000});
+    ]:pythonArchive?[path.join(__dirname,'archive-profile.py'),root,output,final?'full':'live']:args,{windowsHide:true,stdio:['ignore','ignore','pipe'],timeout:snapshot?30000:180000});
     let error='';child.stderr.on('data',data=>{error+=data.toString();});
     child.on('error',reject);child.on('close',code=>{
       // A live database can change during a periodic snapshot; a final closed snapshot follows.
