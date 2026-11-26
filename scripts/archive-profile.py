@@ -16,7 +16,7 @@ def include(info):
     return info
 
 try:
-    with tarfile.open(output, "w:gz", format=tarfile.PAX_FORMAT, encoding="utf-8") as archive:
+    with tarfile.open(output, "w:gz", format=tarfile.PAX_FORMAT, encoding="utf-8", compresslevel=1) as archive:
         archive.add(source, arcname=".", filter=include)
 except Exception as error:
     print("Profile archive failed: " + type(error).__name__ + "; errno=" + str(getattr(error, "errno", None)), file=sys.stderr)

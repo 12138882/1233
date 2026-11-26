@@ -338,7 +338,7 @@ async function tar(output,final=false,useSnapshot=true) {
     const pythonArchive=platform==='windows'&&!snapshot;
     const child = spawn(snapshot?'pwsh':pythonArchive?'python':'tar',snapshot?[
       '-NoProfile','-NonInteractive','-File',path.join(__dirname,'archive-chrome-windows.ps1'),'-Root',root,'-Archive',output
-    ]:pythonArchive?[path.join(__dirname,'archive-profile.py'),root,output,final?'full':'live']:args,{windowsHide:true,stdio:['ignore','ignore','pipe'],timeout:snapshot?30000:180000});
+    ]:pythonArchive?[path.join(__dirname,'archive-profile.py'),root,output,final?'full':'live']:args,{windowsHide:true,stdio:['ignore','ignore','pipe'],timeout:180000});
     let error='';child.stderr.on('data',data=>{error+=data.toString();});
     child.on('error',reject);child.on('close',code=>{
       // A live database can change during a periodic snapshot; a final closed snapshot follows.
