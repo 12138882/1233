@@ -24,6 +24,7 @@ connection.write_text(json.dumps(data,indent=2))
 PY
 # Set both web URL schemes using Apple's LaunchServices API.
 swift - <<'SWIFT'
+import Foundation
 import CoreServices
 for scheme in ["http", "https"] {
     let result = LSSetDefaultHandlerForURLScheme(scheme as CFString, "com.google.Chrome" as CFString)
