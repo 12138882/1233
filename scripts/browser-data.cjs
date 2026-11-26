@@ -183,6 +183,38 @@ async function cookiesExport() {
   await fsp.writeFile(path.join(root, 'portable-cookies.json'), JSON.stringify(cookies), {mode:0o600});
   console.log('Browser session checkpoint captured (values kept private)');
 }
+async function tabsExport(){
+  const targets=(await cdp('Target.getTargets')).targetInfos.filter(t=>t.type==='page'&&!t.browserContextId&&!t.url.startsWith('devtools://'));
+  const windows=new Map();
+  for(const target of targets){
+    try{
+      const window=await cdp('Browser.getWindowForTarget',{targetId:target.targetId});
+      if(!windows.has(window.windowId))windows.set(window.windowId,{bounds:window.bounds,urls:[]});
+      windows.get(window.windowId).urls.push(target.url||'about:blank');
+    }catch{}
+  }
+  await fsp.writeFile(path.join(root,'portable-tabs.json'),JSON.stringify([...windows.values()]),{mode:0o600});
+}
+async function tabsImport(){
+  const file=path.join(root,'portable-tabs.json');if(!fs.existsSync(file))return;
+  const windows=JSON.parse(await fsp.readFile(file,'utf8'));
+  for(const window of windows){
+    let windowId;
+    for(const original of window.urls){
+      const url=/^(https?:|chrome:|about:)/.test(original)?original:'about:blank';
+      const created=await cdp('Target.createTarget',{url,...(windowId===undefined?{newWindow:true}:{windowId})});
+      if(windowId===undefined)windowId=(await cdp('Browser.getWindowForTarget',{targetId:created.targetId})).windowId;
+    }
+    if(windowId!==undefined&&window.bounds){
+      const bounds=window.bounds;
+      try{
+        if(bounds.windowState==='normal')await cdp('Browser.setWindowBounds',{windowId,bounds:{left:bounds.left,top:bounds.top,width:bounds.width,height:bounds.height,windowState:'normal'}});
+        else await cdp('Browser.setWindowBounds',{windowId,bounds:{windowState:bounds.windowState}});
+      }catch{}
+    }
+  }
+  console.log('Restored saved Chrome windows and tabs after restoring cookies');
+}
 async function cookiesImport() {
   const file = path.join(root,'portable-cookies.json');
   if (!fs.existsSync(file)) return;
@@ -206,7 +238,7 @@ async function launch(importCookies=true) {
   if (!fs.existsSync(readyFile)) throw Error('Browser restore has not completed');
   const args = ['--user-data-dir='+profile,'--disk-cache-dir='+path.join(profile,'Disk Cache'),
     '--remote-debugging-address=127.0.0.1','--remote-debugging-port=9222',
-    '--no-first-run','--no-default-browser-check','--restore-last-session','--start-minimized'];
+    '--no-first-run','--no-default-browser-check','--no-startup-window'];
   const child = spawn(chromePath(), args, {detached:true, stdio:'ignore',windowsHide:true}); child.unref();
   let up=false;
   for(let i=0;i<60;i++){try{await cdp('Browser.getVersion');up=true;break;}catch{await pause(1000);}}
@@ -224,23 +256,32 @@ async function launch(importCookies=true) {
     await cdp('Storage.setCookies',{cookies:[{name:'workflow_backup_probe',value,domain:'workflow-backup.invalid',path:'/',secure:true,httpOnly:true,expires:Date.now()/1000+365*86400}]});
     await fsp.writeFile(probeFile,JSON.stringify({value}),{mode:0o600});
   }
+  if(importCookies)await tabsImport();
   console.log('Chrome is ready; remote debugging listens on loopback only');
 }
-async function tar(output,final=false) {
-  return new Promise((resolve,reject)=>{
+async function tar(output,final=false,useSnapshot=true) {
+  try {await new Promise((resolve,reject)=>{
     const args=['--exclude=SingletonLock','--exclude=SingletonSocket','--exclude=SingletonCookie',
       '--exclude=DevToolsActivePort','--exclude=LOCK','--exclude=lockfile','-czf',output,'-C',root,'.'];
-    const useSnapshot=platform==='windows'&&!final;
-    const child = spawn(useSnapshot?'pwsh':'tar',useSnapshot?[
+    const snapshot=platform==='windows'&&!final&&useSnapshot;
+    if(platform==='windows'&&!final&&!useSnapshot){
+      // The exported cookie store preserves values while Chrome locks this raw DB.
+      for(const p of ['Default/Network/Cookies','Default/Cookies'])for(const suffix of ['','-journal','-wal','-shm'])args.unshift('--exclude=./User Data/'+p+suffix);
+    }
+    const child = spawn(snapshot?'pwsh':'tar',snapshot?[
       '-NoProfile','-NonInteractive','-File',path.join(__dirname,'archive-chrome-windows.ps1'),'-Root',root,'-Archive',output
-    ]:args,{windowsHide:true,stdio:['ignore','ignore','pipe'],timeout:180000});
+    ]:args,{windowsHide:true,stdio:['ignore','ignore','pipe'],timeout:snapshot?30000:180000});
     let error='';child.stderr.on('data',data=>{error+=data.toString();});
     child.on('error',reject);child.on('close',code=>{
       // A live database can change during a periodic snapshot; a final closed snapshot follows.
       if(code===0 || (code===1 && /file changed as we read it|file shrank/i.test(error)))resolve();
       else reject(Error('Profile archive failed; prior backup preserved (archive exit '+code+')'));
     });
-  });
+  });}catch(e){
+    if(platform!=='windows'||final||!useSnapshot)throw e;
+    console.log('Windows snapshot unavailable; using the portable cookie checkpoint with a live profile archive');
+    await tar(output,final,false);
+  }
 }
 async function backup(final=false) {
   if(!fs.existsSync(readyFile))throw Error('Restore incomplete; refusing to replace the saved browser data');
@@ -251,7 +292,7 @@ async function backup(final=false) {
   let staging;
   try {
     if(!fs.existsSync(path.join(profile,'Local State')))throw Error('Chrome profile has not initialized');
-    try { await cookiesExport(); }
+    try { await cookiesExport();await tabsExport(); }
     catch(e){if(!final)throw e;console.log('Browser is closed; retaining its most recent portable cookie checkpoint');}
     if(final){try{await cdp('Browser.close');}catch{}await pause(4000);}
     await fsp.writeFile(path.join(root,'backup-manifest.json'),JSON.stringify({format:1,platform,run:process.env.GITHUB_RUN_ID,created:new Date().toISOString(),final}),{mode:0o600});
@@ -307,5 +348,5 @@ async function main(){
   else if(command==='backup')await backup();else if(command==='watch')await watch();
   else if(command==='finish')await finish();else if(command==='session')await session();else throw Error('Unknown browser-data command');
 }
-module.exports={encryptFile,decryptFile,bookmarksSave,bookmarksRestore,release,api,root,profile};
+module.exports={encryptFile,decryptFile,bookmarksSave,bookmarksRestore,release,api,root,profile,cdp,tabsExport,tabsImport};
 if(require.main===module)main().catch(e=>{console.error(e.message);process.exitCode=1;});
