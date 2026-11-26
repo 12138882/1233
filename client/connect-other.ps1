@@ -98,8 +98,9 @@ function Ensure-Tailscale {
         [IO.File]::WriteAllText($keyPath, (Unprotect-LocalValue $config.tailscale_auth_protected))
         $identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
         & icacls.exe $keyPath /inheritance:r /grant:r "${identity}:(F)" | Out-Null
-        & $ts login "--auth-key=file:$keyPath" --accept-dns=false --unattended=true --hostname=client-12138882 --nickname=github-remote-1233 --timeout=60s
+        & $ts login "--auth-key=file:$keyPath" --accept-dns=false --unattended=true --hostname=client-12138882 --timeout=60s
         $loginExit = $LASTEXITCODE
+        if ($loginExit -ne 0) { throw "Tailscale 登录未完成（退出码 $loginExit）。请查看上方的具体错误。" }
         $deadline = [DateTime]::UtcNow.AddSeconds(30)
         do {
             $statusText = & $ts status --json 2>$null
@@ -148,10 +149,37 @@ function Get-Connection {
     throw '准备环境超时，请查看运行页面中的日志。'
 }
 
+function Resolve-LiveAddress {
+    param($Connection)
+    $ts = Join-Path $env:ProgramFiles 'Tailscale\tailscale.exe'
+    $fixedName = 'remote-'+$System+'-1233'
+    for ($attempt=0; $attempt -lt 5; $attempt++) {
+        $status = (& $ts status --json 2>$null) | ConvertFrom-Json
+        $peers = @($status.Peer.PSObject.Properties.Value | Where-Object {
+            $_.Online -and ($_.HostName -eq $fixedName -or $_.DNSName -like ($fixedName+'.*'))
+        })
+        $matchingRun = @($peers | Where-Object { $_.TailscaleIPs -contains $Connection.ip })
+        if ($matchingRun.Count -eq 1) { $selected = $matchingRun[0] }
+        elseif ($peers.Count -eq 1) { $selected = $peers[0] }
+        else { $selected = $null }
+        if ($selected) {
+            $address = $selected.TailscaleIPs | Where-Object { $_ -match '^100\.\d{1,3}\.\d{1,3}\.\d{1,3}$' } | Select-Object -First 1
+            if ($address) {
+                $Connection.ip = [string]$address
+                Write-Host "已自动识别 $fixedName 的 IP：$address"
+                return $Connection
+            }
+        }
+        Start-Sleep -Seconds 2
+    }
+    throw "未能从 Tailscale 在线设备中确认 $fixedName 的 IP，请检查设备是否在线以及账号网络是否一致。"
+}
+
 try {
     $connection = Get-Connection
     if ($NoConnect) { $connection | ConvertTo-Json -Depth 8; return }
     Ensure-Tailscale
+    $connection = Resolve-LiveAddress $connection
     if ($System -eq 'windows') {
         if ($TestConnection) {
             $tcp = New-Object Net.Sockets.TcpClient
