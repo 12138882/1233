@@ -104,6 +104,21 @@ function Get-TailscaleState {
     throw '无法读取 Tailscale 状态。请确认 Tailscale 服务已启动，关闭旧的连接窗口后重新运行桌面脚本。'
 }
 
+function Start-LocalTailscaleService {
+    $service=Get-Service -Name Tailscale -ErrorAction Stop
+    if($service.Status -eq 'Running'){return}
+    try{Start-Service -Name Tailscale -ErrorAction Stop}
+    catch{
+        Write-Host 'Tailscale 服务已停止，需要 Windows 管理员授权来启动服务。'
+        $command="`$ErrorActionPreference='Stop';Set-Service -Name Tailscale -StartupType Automatic;Start-Service -Name Tailscale"
+        $encoded=[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
+        $helper=Start-Process -FilePath powershell.exe -Verb RunAs -WindowStyle Hidden -ArgumentList @('-NoProfile','-EncodedCommand',$encoded) -Wait -PassThru
+        if($helper.ExitCode -ne 0){throw '启动 Tailscale 服务失败，请允许 Windows 管理员授权后重试。'}
+    }
+    $service=Get-Service -Name Tailscale
+    $service.WaitForStatus([ServiceProcess.ServiceControllerStatus]::Running,[TimeSpan]::FromSeconds(20))
+}
+
 function Ensure-Tailscale {
     $ts = Join-Path $env:ProgramFiles 'Tailscale\tailscale.exe'
     if (-not (Test-Path -LiteralPath $ts)) { throw '请先安装 Tailscale：https://tailscale.com/download/windows' }
@@ -115,6 +130,7 @@ function Ensure-Tailscale {
     try {
         $acquired = $mutex.WaitOne(90000)
         if (-not $acquired) { throw '另一个连接窗口正在登录 Tailscale，请稍后重试。' }
+        Start-LocalTailscaleService
         $state = Get-TailscaleState
         $sameNetwork = (-not $expectedTailnet -or $state.CurrentTailnet.MagicDNSSuffix -eq $expectedTailnet)
         if ($state.BackendState -eq 'Running' -and $sameNetwork) {
