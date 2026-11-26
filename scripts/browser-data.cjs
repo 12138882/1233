@@ -127,6 +127,11 @@ async function bookmarksSave(item,staging){
   console.log('Updated shared encrypted bookmarks');
 }
 async function fileHash(file){const hash=crypto.createHash('sha256');for await(const chunk of fs.createReadStream(file))hash.update(chunk);return hash.digest('hex');}
+function extractArchive(archive,destination,mode){
+  const output=execFileSync(platform==='windows'?'python':'python3',[path.join(__dirname,'extract-profile.py'),archive,destination,mode],{encoding:'utf8',windowsHide:true,maxBuffer:1024*1024});
+  const result=JSON.parse(output);if(!Number.isInteger(result.files)||result.files<1)throw Error('Empty browser profile archive');
+  console.log('Extracted browser profile with Unicode filenames ('+result.files+' entries)');
+}
 function safeManagedRoot(){
   const expected=platform==='windows'?path.join(process.env.LOCALAPPDATA,'WorkflowChrome'):path.join(os.homedir(),'Library/Application Support/WorkflowChrome');
   const actual=path.resolve(root);
@@ -161,10 +166,8 @@ async function localSeedRestore(item){
     }
     if((await fsp.stat(encrypted)).size!==manifest.bytes||await fileHash(encrypted)!==manifest.sha256)throw Error('Chrome seed verification failed');
     const archive=path.join(staging,'profile.tar.gz');await decryptFile(encrypted,archive,key());
-    const entries=execFileSync('tar',['-tzf',archive],{encoding:'utf8',maxBuffer:32*1024*1024,windowsHide:true}).split(/\r?\n/).filter(Boolean);
-    if(entries.some(n=>!n.startsWith('User Data/')||n.split(/[\\/]/).includes('..')))throw Error('Unsafe local Chrome seed archive');
     const extracted=path.join(staging,'extracted');await fsp.mkdir(extracted);
-    execFileSync('tar',['-xzf',archive,'-C',extracted],{windowsHide:true});
+    extractArchive(archive,extracted,'seed');
     if(!fs.existsSync(path.join(extracted,'User Data','Local State')))throw Error('Local Chrome profile is incomplete');
     safeManagedRoot();
     if(fs.existsSync(root)){previous=root+'.before-seed-'+crypto.randomBytes(6).toString('hex');await fsp.rename(root,previous);}
@@ -194,10 +197,8 @@ async function restore() {
       const encrypted = path.join(staging, 'backup.enc'), archive = path.join(staging, 'profile.tar.gz');
       await download(list[0],encrypted);
       await decryptFile(encrypted, archive, key());
-      const entries = execFileSync('tar', ['-tzf', archive], {encoding:'utf8', maxBuffer:32*1024*1024, windowsHide:true}).split(/\r?\n/).filter(Boolean);
-      if (entries.some(name => name.startsWith('/') || /^[A-Za-z]:/.test(name) || name.split(/[\\/]/).includes('..'))) throw Error('Unsafe archive path');
       const extracted = path.join(staging,'extracted'); await fsp.mkdir(extracted);
-      execFileSync('tar', ['-xzf', archive, '-C', extracted], {windowsHide:true});
+      extractArchive(archive,extracted,'profile');
       const manifest = JSON.parse(await fsp.readFile(path.join(extracted,'backup-manifest.json'),'utf8'));
       if (manifest.platform !== platform || manifest.format !== 1) throw Error('Wrong platform or unsupported backup');
       if (fs.existsSync(root) && (await fsp.readdir(root)).length) throw Error('Refusing to overwrite an existing browser profile');
